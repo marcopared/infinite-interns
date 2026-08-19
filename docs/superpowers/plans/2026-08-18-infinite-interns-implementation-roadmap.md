@@ -4,7 +4,7 @@
 
 **Goal:** Build InfiniteInterns from the approved architecture into a self-hosted, evidence-gated autonomous SWE factory that can certify itself with InternBench before being trusted with JobBot.
 
-**Architecture:** Implementation is split into six independently testable increments: deterministic authority, durable orchestration/execution, specification/planning, agent/context/review, verification/security/release, and operator/InternBench. LangGraph Agent Server provides durable orchestration, PostgreSQL stores application state, isolated Docker workers execute code, Codex is the primary SWE backend, Kimi/DeepSeek provide independent review, and deterministic evidence code owns `VERIFIED`, release `PASS`, and the only `DONE` transition.
+**Architecture:** Implementation is split into seven independently testable increments: deterministic authority, durable orchestration/execution, repository bootstrap, specification/planning, agent/context/review, verification/convergence/security/release, and operator/InternBench. LangGraph Agent Server provides durable orchestration, PostgreSQL stores application state, isolated Docker workers execute code, Codex is the primary SWE backend, Kimi/DeepSeek provide independent review, and deterministic evidence code owns `VERIFIED`, release `PASS`, and the only `DONE` transition.
 
 **Tech Stack:** Python 3.13, uv, LangGraph Agent Server, FastAPI custom routes, PostgreSQL 16, Redis 7, SQLAlchemy 2.x, Alembic, psycopg 3, Pydantic 2, Typer, Rich, pytest, Playwright, Docker/Compose, TypeScript `@openai/codex-sdk` bridge, OpenAI-compatible Kimi/DeepSeek adapters.
 
@@ -54,6 +54,7 @@ src/infinite_interns/
   api/
   agents/
   artifacts/
+  bootstrap/
   budget/
   config/
   context/
@@ -196,6 +197,7 @@ Use Typer + Rich. No separate TUI framework in v1.
 
 ```text
 interns init
+interns new
 interns doctor
 interns run
 interns status
@@ -244,6 +246,14 @@ Deliverable: LangGraph shell, task DAG engine, leases/fencing, executor daemon, 
 
 Gate: dependency-safe parallel tasks execute, one killed worker is recovered, zombie writes are rejected, integration remains green.
 
+### Stage 2B — Repository bootstrap
+
+Plan: `docs/superpowers/plans/2026-08-18-stage-2b-repository-bootstrap.md`
+
+Deliverable: brownfield/greenfield classification, base-commit snapshot, project guidance discovery, bounded command detection, baseline verification, pre-existing failure provenance, neutral greenfield initialization, and graph ordering before specification.
+
+Gate: parent graph cannot enter specification without a durable baseline ref; brownfield pre-existing failures are distinguishable from new regressions; greenfield bootstrap invents no product architecture.
+
 ### Stage 3A — Specification and planning
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-3a-specification-planning.md`
@@ -256,15 +266,15 @@ Gate: no implementation task becomes READY until required requirements have acce
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-3-agent-context-review.md`
 
-Deliverable: `AgentBackend`, Codex SDK bridge through the scoped model gateway, Kimi/DeepSeek adapters, context packets, fresh-review contexts, typed findings, reproduction routing, task-local repair loop, and deterministic model-routing tiers.
+Deliverable: `AgentBackend`, scoped ModelGateway, Codex SDK bridge, Kimi/DeepSeek adapters, commit-aware context packets, validated durable memory, fresh-review contexts, typed findings, reproduction routing, bounded escalation ladder, and deterministic review tiers.
 
-Gate: seeded defect is repaired, reviewer context is cold, false-positive finding is rejected by reproduction, confirmed finding becomes repair work.
+Gate: seeded defect is repaired, reviewer context is cold, false-positive finding is rejected by reproduction, confirmed finding becomes repair work, and workers never receive master provider credentials.
 
 ### Stage 4 — Verification, convergence, security, and release
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-4-verification-security-release.md`
 
-Deliverable: protected oracles, evidence invalidation, E0-E5 verification, Playwright failure packages, stability/flaky classification, application-security gates, worker security policy, clean-room preview deployment, convergence gap loop, deployed E2E, and the sole deterministic `DONE` transition.
+Deliverable: protected oracles, evidence invalidation, E0-E5 verification, mutation/browser failure packages, stability/flaky classification, application-security gates, factory security policy, convergence gap loop, clean-room preview deployment, deployed E2E, and the sole deterministic `DONE` transition.
 
 Gate: release is denied independently by stale evidence, failed/unstable critical journeys, open reproduced convergence gaps, security failures, clean-bootstrap failure, or deployed-E2E failure; exactly one valid completion path exists.
 
@@ -272,7 +282,7 @@ Gate: release is denied independently by stale evidence, failed/unstable critica
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-5-operator-internbench.md`
 
-Deliverable: full CLI/API, dry-run/readiness, budgets/deadlines, reports, provider degradation, deterministic/security/chaos InternBench, synthetic SWE cases, mini-product hidden evaluators, and certification report.
+Deliverable: full CLI/API, greenfield/new workflow, dry-run/readiness, budgets/deadlines, reports, provider degradation, deterministic/security/chaos InternBench, synthetic SWE cases, mini-product hidden evaluators, and certification report.
 
 Gate: zero control/security violations, zero false factory `PASS` results, hidden critical journeys/clean bootstrap/deployed E2E pass for every claimed PASS, and architecture-defined full-product completion threshold is met.
 
@@ -305,6 +315,7 @@ format/lint
 typecheck
 unit
 postgres integration
+bootstrap/baseline tests
 spec/planning traceability tests
 scheduler/lease tests
 executor sandbox tests
