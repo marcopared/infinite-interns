@@ -63,7 +63,6 @@ class Settings(BaseSettings):
     models: ModelSettings = Field(default_factory=ModelSettings)
 
 
-
 def load_settings(path: Path | None = None) -> Settings:
     if path is None:
         return Settings()
@@ -72,7 +71,7 @@ def load_settings(path: Path | None = None) -> Settings:
     if loaded is None:
         return Settings()
     if not isinstance(loaded, dict):
-        raise ValueError("configuration root must be a mapping")
+        raise TypeError("configuration root must be a mapping")
 
     data = cast(dict[str, Any], loaded)
     return Settings.model_validate(data)
