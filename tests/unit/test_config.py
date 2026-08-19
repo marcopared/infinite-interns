@@ -18,9 +18,11 @@ def test_overnight_defaults_match_architecture() -> None:
 
 def test_hard_budget_cannot_be_below_soft_budget() -> None:
     with pytest.raises(ValueError):
-        Settings(budget={"soft_model_usd": 300, "hard_model_usd": 200})
+        Settings.model_validate({"budget": {"soft_model_usd": 300, "hard_model_usd": 200}})
 
 
 def test_lease_ttl_must_exceed_two_heartbeat_intervals() -> None:
     with pytest.raises(ValueError):
-        Settings(scheduler={"lease_ttl_seconds": 60, "heartbeat_seconds": 30})
+        Settings.model_validate(
+            {"scheduler": {"lease_ttl_seconds": 60, "heartbeat_seconds": 30}}
+        )
