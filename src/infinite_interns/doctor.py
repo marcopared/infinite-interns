@@ -71,10 +71,12 @@ def _check_database() -> CheckResult:
 
     dsn = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
     try:
-        with psycopg.connect(dsn, connect_timeout=3) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                row = cursor.fetchone()
+        with (
+            psycopg.connect(dsn, connect_timeout=3) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("SELECT 1")
+            row = cursor.fetchone()
     except psycopg.Error as exc:
         return CheckResult(name="database", ok=False, detail=exc.__class__.__name__)
 
