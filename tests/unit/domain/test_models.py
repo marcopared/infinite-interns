@@ -1,10 +1,9 @@
 from datetime import UTC, datetime
 
-import pytest
-from pydantic import ValidationError
-
 from infinite_interns.domain.enums import EvidenceResult, RequirementStatus
 from infinite_interns.domain.models import EvidenceRecord
+import pytest
+from pydantic import ValidationError
 
 
 EXPECTED_REQUIREMENT_STATUSES = {
