@@ -26,15 +26,25 @@ class FilesystemArtifactStore:
             raise ValueError("artifact path escapes configured root")
         return path
 
-    def put(self, run_id: str, kind: str, artifact_id: str, data: bytes) -> str:
-        path = self._path_for(run_id, kind, artifact_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+    @staticmethod
+    def _uri(run_id: str, kind: str, artifact_id: str) -> str:
         return "artifact://runs/{}/{}/{}".format(
             quote(run_id, safe="._-"),
             quote(kind, safe="._-"),
             quote(artifact_id, safe="._-"),
         )
+
+    def put(self, run_id: str, kind: str, artifact_id: str, data: bytes) -> str:
+        path = self._path_for(run_id, kind, artifact_id)
+        uri = self._uri(run_id, kind, artifact_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("xb") as handle:
+                handle.write(data)
+        except FileExistsError:
+            if path.read_bytes() != data:
+                raise
+        return uri
 
     def get(self, uri: str) -> bytes:
         parsed = urlparse(uri)
