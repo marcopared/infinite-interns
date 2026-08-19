@@ -10,7 +10,6 @@ class RunStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     UNSTABLE = "unstable"
-    PASS = "pass"
     DONE = "done"
 
 
