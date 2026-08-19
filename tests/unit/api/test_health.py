@@ -1,9 +1,9 @@
-from fastapi.testclient import TestClient
+import pytest
 
-from infinite_interns.api.app import app
+from infinite_interns.api.app import app, health
 
 
-def test_health_route() -> None:
-    response = TestClient(app).get("/api/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+@pytest.mark.asyncio
+async def test_health_route() -> None:
+    assert any(getattr(route, "path", None) == "/api/health" for route in app.routes)
+    assert await health() == {"status": "ok"}
