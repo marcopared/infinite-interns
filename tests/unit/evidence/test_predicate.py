@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from infinite_interns.domain.enums import EvidenceResult
 from infinite_interns.domain.models import EvidenceRecord
@@ -35,6 +36,11 @@ def policy() -> ReleasePolicy:
     return ReleasePolicy(
         gates=(GateRequirement(gate_id="ACC-1", mandatory=True, requirement_id="REQ-1"),)
     )
+
+
+def test_release_policy_requires_at_least_one_mandatory_gate() -> None:
+    with pytest.raises(ValidationError):
+        ReleasePolicy(gates=())
 
 
 @pytest.mark.parametrize(
