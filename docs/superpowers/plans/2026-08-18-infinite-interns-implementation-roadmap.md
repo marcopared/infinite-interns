@@ -4,7 +4,7 @@
 
 **Goal:** Build InfiniteInterns from the approved architecture into a self-hosted, evidence-gated autonomous SWE factory that can certify itself with InternBench before being trusted with JobBot.
 
-**Architecture:** The implementation is split into five independently testable stages. Each stage lands a working increment, preserves deterministic authority over completion, and becomes the base for the next stage. LangGraph Agent Server provides durable orchestration, PostgreSQL stores application state, isolated Docker workers execute code, Codex is the primary SWE backend, Kimi/DeepSeek provide independent review, and a deterministic evidence engine owns `VERIFIED`, `PASS`, and `DONE`.
+**Architecture:** Implementation is split into six independently testable increments: deterministic authority, durable orchestration/execution, specification/planning, agent/context/review, verification/security/release, and operator/InternBench. LangGraph Agent Server provides durable orchestration, PostgreSQL stores application state, isolated Docker workers execute code, Codex is the primary SWE backend, Kimi/DeepSeek provide independent review, and deterministic evidence code owns `VERIFIED`, release `PASS`, and the only `DONE` transition.
 
 **Tech Stack:** Python 3.13, uv, LangGraph Agent Server, FastAPI custom routes, PostgreSQL 16, Redis 7, SQLAlchemy 2.x, Alembic, psycopg 3, Pydantic 2, Typer, Rich, pytest, Playwright, Docker/Compose, TypeScript `@openai/codex-sdk` bridge, OpenAI-compatible Kimi/DeepSeek adapters.
 
@@ -14,10 +14,10 @@
 
 - Requirements, not tasks, are the unit of completion.
 - No LLM may directly mark a requirement `VERIFIED`, a release `PASS`, or a run `DONE`.
-- Acceptance/release oracles are protected from implementation workers.
+- Acceptance/release oracles are produced before implementation and protected from implementation workers.
 - Runtime evidence outranks model judgment.
 - Retries cannot convert instability into success.
-- Evidence is commit-bound and provenance-aware.
+- Evidence is commit-bound, environment-bound, verifier-version-bound, and provenance-aware.
 - Reviewers start in fresh contexts and communicate through typed findings.
 - Workers are disposable; Git/spec/evidence/control-plane state is durable.
 - Integration is serialized and anchored to `last_green_commit`.
@@ -35,16 +35,15 @@
 
 ### Runtime shape
 
-Use a **self-hosted LangGraph Agent Server in single-host mode** for v1 workstation execution. The graph and InfiniteInterns HTTP API live in the same Agent Server image using LangGraph custom FastAPI routes. PostgreSQL and Redis are separate Compose services. The graph server never launches LLM worker processes directly through the Docker socket; a dedicated executor daemon owns Docker lifecycle operations.
+Use a **self-hosted LangGraph Agent Server in single-host workstation mode** for v1. The graph and InfiniteInterns HTTP API run in the Agent Server image using custom FastAPI routes. PostgreSQL and Redis are separate services. The Agent Server never owns the Docker socket; a dedicated executor daemon owns Docker lifecycle operations.
 
-Development commands:
+Development:
 
 ```bash
 uv run langgraph dev --no-browser
-uv run langgraph up --watch
 ```
 
-Production-like workstation mode uses `langgraph up`/Compose with persistent PostgreSQL and Redis. Cloud/Kubernetes execution remains behind the same `ExecutionBackend` interface.
+Production-like workstation mode uses the Agent Server/Docker stack with persistent PostgreSQL and Redis. Future Kubernetes execution remains behind `ExecutionBackend`.
 
 ### Python/package layout
 
@@ -55,31 +54,44 @@ src/infinite_interns/
   api/
   agents/
   artifacts/
+  budget/
   config/
   context/
+  convergence/
   db/
   domain/
   evidence/
   execution/
+  gateway/
   graph/
   integration/
   internbench/
+  oracles/
+  planning/
   release/
+  review/
   scheduler/
   security/
+  specification/
   verification/
 ```
 
-The CLI entry point is `interns = infinite_interns.cli:app`.
+CLI entry point:
+
+```toml
+[project.scripts]
+interns = "infinite_interns.cli:app"
+```
 
 ### Database
 
-Use PostgreSQL 16. LangGraph Agent Server owns its own persistence tables. InfiniteInterns application tables live in PostgreSQL schema `ii` and are managed by Alembic. SQLAlchemy async sessions use psycopg 3.
+Use PostgreSQL 16. LangGraph owns its persistence tables. InfiniteInterns application tables live in schema `ii`, managed by Alembic via SQLAlchemy async + psycopg 3.
 
 Core tables:
 
 ```text
 ii.runs
+ii.product_inputs
 ii.spec_versions
 ii.requirements
 ii.tasks
@@ -92,11 +104,11 @@ ii.deployments
 ii.budgets
 ```
 
-Task leases live on `ii.tasks` as `lease_owner`, `lease_epoch`, and `lease_expires_at`. All authoritative write APIs require the current lease epoch where task ownership is relevant.
+Task leases use `lease_owner`, `lease_epoch`, and `lease_expires_at`. Authoritative task writes validate current epoch.
 
 ### Artifact storage
 
-Use URI form:
+URI:
 
 ```text
 artifact://runs/<run_id>/<kind>/<artifact_id>
@@ -108,15 +120,22 @@ Local backend root:
 .infinite-interns/artifacts/
 ```
 
-The database stores artifact metadata and URI only. Raw logs, Playwright traces, screenshots, reports, patches, and large evidence blobs stay in the artifact backend.
+PostgreSQL stores artifact metadata/URI, not large bodies.
 
-### Model backends
+### Model backends and gateway
 
-Primary SWE backend: Codex.
+Primary SWE backend: Codex through the official TypeScript `@openai/codex-sdk` in `bridge/codex/`.
 
-Use the official TypeScript `@openai/codex-sdk` behind a small JSONL stdio bridge under `bridge/codex/`. Python owns the stable `AgentBackend` interface and launches the bridge in the isolated task environment. The bridge exposes `start`, `resume`, `run`, and `close` operations and returns typed `AgentResult` envelopes.
+The bridge is configured with:
 
-Independent reviewers use direct OpenAI-compatible HTTP adapters through a model gateway:
+```text
+baseUrl = InfiniteInterns ModelGateway OpenAI-compatible /v1 endpoint
+apiKey  = short-lived attempt capability token
+```
+
+The worker therefore does not receive the master OpenAI credential. The gateway validates the token's run/task/attempt/lease epoch/provider/model scope, then forwards the request with the real provider credential. The gateway must support the OpenAI Responses API surface used by Codex, not only Chat Completions.
+
+Independent reviewers also use the gateway:
 
 ```text
 Kimi default:      k3-256k
@@ -124,46 +143,25 @@ Kimi large audit:  k3
 DeepSeek default:  deepseek-v4-pro
 ```
 
-Kimi base URL: `https://api.kimi.com/coding/v1`.
-DeepSeek base URL: `https://api.deepseek.com`.
+Provider-specific responses are normalized into strict Pydantic schemas before control-plane routing.
 
-Provider-specific responses are normalized into Pydantic schemas before the control plane uses them.
+### Secret model
 
-### Model gateway and secrets
-
-Workers never receive master provider credentials. A `ModelGateway` service owns provider credentials and issues short-lived per-attempt capability tokens bound to:
+Persist references such as:
 
 ```text
-run_id
-task_id
-attempt_id
-lease_epoch
-provider
-model
-expires_at
+secret://providers/openai
+secret://providers/kimi
+secret://providers/deepseek
 ```
 
-Workers may see the scoped gateway token; compromise of that token does not grant access to GitHub, cloud, databases, or other runs. The gateway is the only component with real provider API keys.
-
-Secret references use `secret://<provider>/<name>` in persisted state. Secret values are resolved only inside privileged services and are never written to events, evidence, checkpoints, prompts, or reports.
+Secret values resolve only in privileged services and never enter events, evidence, checkpoints, reports, or persisted prompts. Worker-visible capability tokens are short-lived and scoped, not master credentials.
 
 ### Worker sandbox
 
-Workstation v1 uses Docker + Git worktrees.
+Workstation v1 uses Docker + Git worktrees. Each task receives one worktree, branch, isolated test DB, browser profile, artifact namespace, port range, and lease epoch.
 
-Each task receives:
-
-```text
-one worktree
-one task branch
-one app port range
-one test database
-one browser profile
-one artifact namespace
-one lease epoch
-```
-
-Worker containers run non-root, do not mount the host Docker socket, do not mount the integration checkout, and attach to an internal Docker network. Internet egress passes through an allowlist proxy; default worker egress is denied.
+Workers run non-root, do not mount the host Docker socket or integration checkout, attach to an internal Docker network, and use an allowlist proxy for approved outbound traffic.
 
 ### Scheduler defaults
 
@@ -182,7 +180,7 @@ max heavy-test workers:        2
 max concurrent integration:    1
 ```
 
-Run defaults for `max-quality/overnight`:
+Default `max-quality/overnight` run:
 
 ```text
 deadline: 8 hours
@@ -190,13 +188,11 @@ soft model budget: $200
 hard model budget: $300
 ```
 
-All values are configuration, not constants baked into graph logic.
+These are configuration defaults, not graph constants.
 
-### CLI/operator surface
+### Operator surface
 
-Use Typer for commands and Rich for output/live status. Do not add a separate TUI framework in v1.
-
-Commands delivered by certification:
+Use Typer + Rich. No separate TUI framework in v1.
 
 ```text
 interns init
@@ -213,84 +209,82 @@ interns report
 
 ### Release backend
 
-The first concrete deployment adapter is `DockerPreviewDeployment`. It creates a clean image/container from a fresh clone, returns a stable preview URL on an isolated local Docker network, and runs deployed E2E against that URL. The interface is intentionally compatible with externally hosted preview adapters without making an external cloud vendor mandatory for v1 certification.
+First deployment adapter: `DockerPreviewDeployment`. It builds from a fresh clone at exact candidate SHA, creates a fresh DB, runs migrations/build/start, returns an isolated preview URL, and runs deployed E2E. The `DeploymentBackend` interface allows future hosted preview adapters.
 
 ### Observability
 
-LangSmith tracing is optional and off by default. InfiniteInterns always writes structured application events and OpenTelemetry-compatible logs locally. Enabling LangSmith must not change correctness or completion semantics.
+LangSmith is optional and off by default. Structured application events and local OpenTelemetry-compatible logs are always present. Turning tracing on/off cannot alter correctness semantics.
 
-### InternBench v1 products
+### InternBench v1 workloads
 
-Certification uses three greenfield mini-products plus one brownfield workload:
+1. `issue-tracker` — auth, projects, issues, comments, filtering, authorization, persistence.
+2. `inventory` — products, stock ledger, roles, audit history, invariants, persistence.
+3. `booking` — accounts, availability, concurrency conflict prevention, cancellation, authorization, persistence.
+4. `brownfield-shop` — an existing full-stack app requiring a cross-stack feature without regressions.
 
-1. `issue-tracker` — auth, projects, issues, comments, filtering, persistence.
-2. `inventory` — products, stock movements, roles, audit history, persistence.
-3. `booking` — accounts, availability, conflict prevention, cancellation, persistence.
-4. `brownfield-shop` — an existing small full-stack app requiring a cross-stack feature without regressions.
-
-Hidden evaluator suites live outside the candidate workload workspace and are mounted only into the evaluator container after the factory has produced its release candidate.
+Hidden evaluators are inaccessible to candidate workers and mounted only after the factory produces a terminal candidate result.
 
 ---
 
-## Stage sequence
+## Build sequence
 
 ### Stage 1 — Deterministic foundation
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-1-deterministic-foundation.md`
 
-Deliverable: installable `interns` package, typed domain/config models, PostgreSQL schema, event/evidence repositories, artifact URI backend, deterministic requirement status and release predicate, and `interns doctor`/`interns status` skeletons. No real model calls.
+Deliverable: package/config/domain contracts, PostgreSQL schema/repositories, artifact backend, deterministic requirement/release evaluation, doctor/status skeleton. No real model calls and no `DONE` transition yet.
 
-Acceptance gate:
-
-```bash
-uv run pytest tests/unit tests/integration/db -q
-uv run ruff check .
-uv run pyright
-```
-
-A test must prove that no code path can produce `DONE` when any mandatory release gate is false.
+Gate: false release `PASS` is impossible with missing/stale/failing mandatory evidence.
 
 ### Stage 2 — Durable orchestration and isolated execution
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-2-orchestration-execution.md`
 
-Deliverable: LangGraph parent graph, task DAG, cycle detection, scheduler, leases/fencing, executor daemon, Docker worktrees, heartbeat/stall handling, serialized integration, `last_green_commit`, crash recovery, and a deterministic fake-worker end-to-end run.
+Deliverable: LangGraph shell, task DAG engine, leases/fencing, executor daemon, Docker worktrees, heartbeats/stall recovery, serialized integration, `last_green_commit`, fake-worker end-to-end run.
 
-Acceptance gate: a fixture repository with three dependency-safe tasks must execute two tasks concurrently, serialize integration, survive one killed worker, reject a zombie worker write, and finish on the expected green commit.
+Gate: dependency-safe parallel tasks execute, one killed worker is recovered, zombie writes are rejected, integration remains green.
 
-### Stage 3 — Agent, context, and review pipeline
+### Stage 3A — Specification and planning
+
+Plan: `docs/superpowers/plans/2026-08-18-stage-3a-specification-planning.md`
+
+Deliverable: immutable product input/spec versions, assumptions policy, Spec Compiler, independent Test Architect oracle draft, Architect artifact, Task Planner, traceability graph, cross-artifact audit, and planning-readiness gate.
+
+Gate: no implementation task becomes READY until required requirements have acceptance coverage, architecture mapping, justified task coverage, an acyclic DAG, and a clean cross-artifact audit.
+
+### Stage 3B — Agent, context, and review pipeline
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-3-agent-context-review.md`
 
-Deliverable: `AgentBackend`, Codex SDK bridge, model gateway, Kimi/DeepSeek adapters, context packets, fresh-review contexts, typed findings, reproduction routing, task-local Codex repair loop, and model-routing policy.
+Deliverable: `AgentBackend`, Codex SDK bridge through the scoped model gateway, Kimi/DeepSeek adapters, context packets, fresh-review contexts, typed findings, reproduction routing, task-local repair loop, and deterministic model-routing tiers.
 
-Acceptance gate: a seeded defect repository must be repaired by the primary backend, reviewed from a fresh context, and reject at least one synthetic false-positive reviewer finding through deterministic reproduction.
+Gate: seeded defect is repaired, reviewer context is cold, false-positive finding is rejected by reproduction, confirmed finding becomes repair work.
 
-### Stage 4 — Verification, security, and release
+### Stage 4 — Verification, convergence, security, and release
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-4-verification-security-release.md`
 
-Deliverable: protected oracle handling, evidence invalidation, structural/unit/integration/browser/whole-product verification, Playwright failure packages, flaky classification, security capabilities, default-deny egress, secret refs, clean-room build, Docker preview deployment, deployed E2E, and deterministic release evaluation.
+Deliverable: protected oracles, evidence invalidation, E0-E5 verification, Playwright failure packages, stability/flaky classification, application-security gates, worker security policy, clean-room preview deployment, convergence gap loop, deployed E2E, and the sole deterministic `DONE` transition.
 
-Acceptance gate: the same release candidate must fail when a protected E2E is broken, when evidence is stale, when a critical test is flaky, or when an unauthorized action is attempted; it passes only after all required evidence is regenerated for the current commit.
+Gate: release is denied independently by stale evidence, failed/unstable critical journeys, open reproduced convergence gaps, security failures, clean-bootstrap failure, or deployed-E2E failure; exactly one valid completion path exists.
 
 ### Stage 5 — Operator UX and InternBench certification
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-5-operator-internbench.md`
 
-Deliverable: full CLI/API surface, dry-run/readiness, run reports, budgets/deadlines, provider degradation, InternBench deterministic/security/chaos suites, mini-product harness, hidden evaluator, champion/challenger metadata, and certification report.
+Deliverable: full CLI/API, dry-run/readiness, budgets/deadlines, reports, provider degradation, deterministic/security/chaos InternBench, synthetic SWE cases, mini-product hidden evaluators, and certification report.
 
-Acceptance gate: deterministic/safety suites have zero violations, full-product certification has zero false factory `PASS` results, and the configured product-building threshold from the architecture is met.
+Gate: zero control/security violations, zero false factory `PASS` results, hidden critical journeys/clean bootstrap/deployed E2E pass for every claimed PASS, and architecture-defined full-product completion threshold is met.
 
 ---
 
 ## Build-order rule
 
-Do not begin Stage N+1 until Stage N's acceptance gate is green on the integration branch. Stage plans may be refined only to resolve implementation discoveries; any change that weakens architecture invariants requires an explicit architecture amendment.
+Do not begin the next increment until the previous acceptance gate is green on the integration branch. Plans may be refined for implementation discoveries, but any change that weakens architecture invariants requires an explicit architecture amendment.
 
 ## Commit policy
 
-Each task in the stage plans ends with a focused commit. Use conventional prefixes:
+Each task ends with a focused commit using conventional prefixes:
 
 ```text
 build:
@@ -302,24 +296,24 @@ refactor:
 chore:
 ```
 
-Do not combine unrelated stage tasks in one commit.
-
 ## CI progression
 
-Stage 1 introduces baseline Python CI. Each stage adds its own required gates to the same workflow. By Stage 5, required CI includes:
+By certification, required no-paid-provider CI includes:
 
 ```text
 format/lint
 typecheck
 unit
 postgres integration
+spec/planning traceability tests
 scheduler/lease tests
 executor sandbox tests
 provider-contract tests with fakes
 verification/oracle tests
+convergence tests
 security-policy tests
 chaos tests
 InternBench deterministic subset
 ```
 
-Live paid-provider tests are explicit opt-in jobs and never required for ordinary pull requests. Release certification runs them under a configured provider budget.
+Live paid-provider tests are opt-in jobs. Full certification runs them only with an explicit provider budget and configured credentials.
