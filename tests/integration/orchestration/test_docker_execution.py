@@ -78,8 +78,9 @@ async def test_fake_worker_commits_only_inside_task_worktree(tmp_path: Path) -> 
         assert result["lease_epoch"] == 1
         assert result["status"] == "succeeded"
         candidate = result["candidate_commit"]
-        assert _run(["git", "-C", str(worktree.path), "show", f"{candidate}:task-output.txt"])
-        assert not (repo / "task-output.txt").exists()
+        output_name = "task-output-attempt1.txt"
+        assert _run(["git", "-C", str(worktree.path), "show", f"{candidate}:{output_name}"])
+        assert not (repo / output_name).exists()
         assert _run(["git", "rev-parse", "HEAD"], cwd=repo) == base_commit
 
         mounts = json.loads(
