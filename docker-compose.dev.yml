@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: infinite_interns
+      POSTGRES_USER: interns
+      POSTGRES_PASSWORD: interns
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interns -d infinite_interns"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
