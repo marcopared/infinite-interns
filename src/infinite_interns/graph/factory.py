@@ -1,9 +1,8 @@
 """Compiled parent graph exported to the LangGraph Agent Server."""
 
-from langgraph.graph import END, START, StateGraph
-
 from infinite_interns.graph.nodes import load_run, schedule, wait_or_finish
 from infinite_interns.graph.state import FactoryState
+from langgraph.graph import END, START, StateGraph
 
 
 _builder = StateGraph(FactoryState)
