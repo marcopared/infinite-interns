@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from infinite_interns.db.engine import create_engine, create_session_factory
 from infinite_interns.db.repositories import EventRepository, RunRepository
@@ -51,7 +52,10 @@ def _fixture_repo(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     return repo, checkout, base, candidate_a, candidate_b
 
 
-async def _seed_run(run_id: str, base: str) -> tuple[object, object]:
+async def _seed_run(
+    run_id: str,
+    base: str,
+) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
     sessions = create_session_factory(engine)
     async with sessions() as session:
