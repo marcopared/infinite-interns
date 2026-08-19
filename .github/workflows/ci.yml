@@ -39,6 +39,7 @@ jobs:
       - run: uv run pytest tests/unit -q
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/integration -q
+      - run: uv run pytest tests/chaos -q
       - run: uv run pyright
       - name: Validate workstation Compose
         run: docker compose -f docker-compose.workstation.yml config --quiet
