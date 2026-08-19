@@ -1,1 +1,9 @@
-"""Artifact-store protocol is introduced by Stage 1 Task 5."""
+"""Provider-neutral artifact storage contract."""
+
+from typing import Protocol
+
+
+class ArtifactStore(Protocol):
+    def put(self, run_id: str, kind: str, artifact_id: str, data: bytes) -> str: ...
+
+    def get(self, uri: str) -> bytes: ...
