@@ -1,23 +1,26 @@
-# Stage 3 Agent, Context, and Review Implementation Plan
+# Stage 3B Agent, Context, and Review Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Connect InfiniteInterns to real coding/review models while preserving typed contracts, fresh reviewer contexts, reproducible findings, and deterministic routing authority.
+**Goal:** Connect InfiniteInterns to real coding/review models while preserving scoped credentials, typed contracts, fresh reviewer contexts, durable validated memory, reproducible findings, and deterministic routing/escalation authority.
 
-**Architecture:** Python owns a provider-neutral `AgentBackend` abstract interface. Codex runs through a small TypeScript `@openai/codex-sdk` JSONL bridge inside task workers. Kimi and DeepSeek are accessed through a model gateway using OpenAI-compatible APIs. The context builder emits task-specific packets; reviewers receive independent cold packets; model output is schema-validated before routing.
+**Architecture:** Python owns provider-neutral agent services. Codex runs through a TypeScript `@openai/codex-sdk` bridge in the task sandbox; the SDK talks to InfiniteInterns ModelGateway using a custom `baseUrl` and a short-lived attempt capability token as its API key. The gateway validates run/task/attempt/lease/provider/model scope and substitutes the real provider credential. Kimi and DeepSeek also route through the gateway. Context is task-specific and commit-aware. Reviewers receive cold context. Model findings become structured hypotheses routed through reproduction; models never decide completion.
 
-**Tech Stack:** Stage 2 stack plus TypeScript/Node 22, `@openai/codex-sdk`, httpx/OpenAI-compatible HTTP, Pydantic JSON schemas.
+**Tech Stack:** Stages 1-3A plus TypeScript/Node 22, `@openai/codex-sdk`, httpx, Pydantic JSON schemas.
 
 **Spec:** `docs/architecture/infinite-interns-design.md`
 
 ## Global Constraints
 
-- Provider responses never directly transition task, requirement, release, or run authority states.
+- Provider responses never directly transition requirement/release/run authority states.
+- Master model-provider credentials never enter a worker container.
 - Reviewer contexts never include the implementer's reasoning transcript.
-- Agent-to-agent handoff uses typed artifacts and Git/evidence references.
-- Codex may persist a session within one task; task and reviewer boundaries create fresh contexts.
-- Kimi/DeepSeek output is advisory until reproduced or explicitly dispositioned.
-- Provider failure is infrastructure failure unless executable evidence proves an engineering defect.
+- Agent-to-agent handoff uses Git, typed artifacts, evidence, findings, and validated decisions.
+- Codex may persist one session within one task while making progress; task/reviewer boundaries are fresh contexts.
+- Kimi/DeepSeek output is advisory until reproduced/dispositioned.
+- Provider outage is infrastructure failure, not code failure.
+- Repeated engineering failure triggers strategy escalation rather than unbounded same-strategy retry.
+- Durable memory stores validated conclusions, not reasoning diaries.
 
 ---
 
@@ -37,14 +40,16 @@ src/infinite_interns/
     worker_service.py
   context/
     models.py
-    builder.py
     repository_map.py
+    builder.py
+    memory.py
   review/
     service.py
     reproduction.py
   gateway/
     app.py
     capabilities.py
+    providers.py
 bridge/codex/
   package.json
   package-lock.json
@@ -62,7 +67,7 @@ tests/unit/context/
 tests/integration/agents/
 ```
 
-### Task 1: Define provider-neutral agent contracts
+### Task 1: Define typed agent contracts
 
 **Files:**
 - Create: `src/infinite_interns/agents/base.py`
@@ -71,9 +76,9 @@ tests/integration/agents/
 
 **Interfaces:**
 - `AgentBackend.start(request: AgentRequest) -> AgentSession`.
-- `AgentBackend.run(session: AgentSession, request: AgentTurn) -> AgentResult`.
+- `AgentBackend.run(session: AgentSession, turn: AgentTurn) -> AgentResult`.
 - `AgentBackend.close(session: AgentSession) -> None`.
-- `AgentResult` fields: `status`, `summary`, `artifacts`, `evidence`, `candidate_commit`, `findings`, `decisions`, `memory_candidates`, `blockers`, `recommended_next_action`, `usage`.
+- `AgentResult` contains status, summary, artifact/evidence refs, candidate commit, findings, decisions, memory candidates, blockers, recommended next action, and usage.
 
 - [ ] **Step 1: Write strict-schema tests**
 
@@ -96,19 +101,18 @@ def test_reviewer_finding_requires_reproduction_strategy() -> None:
                 "finding_id": "F1",
                 "severity": "high",
                 "confidence": 0.9,
-                "claim": "auth bypass",
+                "claim": "authorization bypass",
             }
         )
 ```
 
-- [ ] **Step 2: Implement strict Pydantic schemas**
+- [ ] **Step 2: Implement frozen Pydantic schemas**
 
-Define frozen `AgentRequest`, `AgentTurn`, `AgentSession`, `UsageRecord`, `ReviewFinding`, `AgentResult`, `DecisionCandidate`, `MemoryCandidate`, and `Blocker`. `ReviewFinding` includes `finding_id`, optional `requirement_id`, `severity`, `confidence`, `claim`, `reproduction_strategy`, `affected_paths`, and `evidence_refs`.
+Define `AgentRequest`, `AgentTurn`, `AgentSession`, `UsageRecord`, `ReviewFinding`, `AgentResult`, `DecisionCandidate`, `MemoryCandidate`, `Blocker`. `ReviewFinding` requires claim, severity, confidence, reproduction strategy, affected paths, and evidence refs.
 
-- [ ] **Step 3: Implement an abstract backend with non-placeholder method bodies**
+- [ ] **Step 3: Implement abstract backend**
 
 ```python
-# src/infinite_interns/agents/base.py
 from abc import ABC, abstractmethod
 
 from .schemas import AgentRequest, AgentResult, AgentSession, AgentTurn
@@ -120,7 +124,7 @@ class AgentBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def run(self, session: AgentSession, request: AgentTurn) -> AgentResult:
+    async def run(self, session: AgentSession, turn: AgentTurn) -> AgentResult:
         raise NotImplementedError
 
     @abstractmethod
@@ -128,7 +132,7 @@ class AgentBackend(ABC):
         raise NotImplementedError
 ```
 
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/agents/test_schemas.py -q
@@ -137,7 +141,60 @@ git add src/infinite_interns/agents tests/unit/agents
 git commit -m "feat: define typed agent backend contracts"
 ```
 
-### Task 2: Build the Codex SDK JSONL bridge
+### Task 2: Implement scoped ModelGateway compatible with Codex SDK
+
+**Files:**
+- Create: `src/infinite_interns/gateway/capabilities.py`
+- Create: `src/infinite_interns/gateway/providers.py`
+- Create: `src/infinite_interns/gateway/app.py`
+- Create: `tests/unit/agents/test_gateway_capabilities.py`
+- Create: `tests/integration/agents/test_gateway.py`
+
+**Interfaces:**
+- `GatewayCapability(run_id, task_id, attempt_id, lease_epoch, provider, allowed_models, expires_at)`.
+- `issue_gateway_token(capability, signing_key) -> str`.
+- Gateway exposes an OpenAI-compatible `/v1/responses` route for Codex plus compatible chat/response routes required by reviewer adapters.
+- Gateway validates current lease epoch before forwarding.
+
+- [ ] **Step 1: Write token-scope tests**
+
+Test expired token, stale lease epoch, wrong provider, and wrong model. All return 403 without invoking fake upstream transport.
+
+```python
+async def test_stale_epoch_token_is_rejected(client, stale_token: str) -> None:
+    response = await client.post(
+        "/v1/responses",
+        headers={"Authorization": f"Bearer {stale_token}"},
+        json={"model": "codex-model", "input": "ping"},
+    )
+    assert response.status_code == 403
+```
+
+- [ ] **Step 2: Implement HMAC capability token**
+
+Canonical JSON payload contains only scoped identifiers/permissions/expiry. Sign with gateway-only HMAC key. Never place provider API secret in token.
+
+- [ ] **Step 3: Implement upstream provider registry**
+
+`ProviderRegistry` resolves `secret://providers/openai`, `secret://providers/kimi`, and `secret://providers/deepseek` only inside gateway process, selects upstream base URL/protocol, and injects actual Authorization upstream.
+
+- [ ] **Step 4: Implement transparent OpenAI Responses proxy**
+
+For `/v1/responses`, validate capability and requested model, preserve request/stream semantics needed by Codex, forward to configured OpenAI upstream, and return compatible status/body/stream. Do not log request Authorization or provider credentials.
+
+- [ ] **Step 5: Add redacted usage metadata**
+
+Record run/task/attempt/provider/model, latency, response status, token/cost metadata when available, and capability ID—not raw token value.
+
+- [ ] **Step 6: Verify and commit**
+
+```bash
+uv run pytest tests/unit/agents/test_gateway_capabilities.py tests/integration/agents/test_gateway.py -q
+git add src/infinite_interns/gateway tests
+git commit -m "feat: broker scoped model access through gateway"
+```
+
+### Task 3: Build Codex SDK JSONL bridge through ModelGateway
 
 **Files:**
 - Create: `bridge/codex/package.json`
@@ -150,12 +207,12 @@ git commit -m "feat: define typed agent backend contracts"
 - Test: `tests/integration/agents/test_codex_bridge_fake.py`
 
 **Interfaces:**
-- Stdin/stdout protocol is one JSON object per line.
-- Request operations are `start`, `run`, `resume`, `close`, and `ping`.
-- Every response contains `request_id`, `ok`, and exactly one of `result` or `error`.
-- Python `CodexBackend` implements `AgentBackend` without parsing human-readable terminal output.
+- JSONL request ops: `ping`, `start`, `run`, `resume`, `close`.
+- Bridge obtains `INFINITE_INTERNS_MODEL_GATEWAY_URL` and `INFINITE_INTERNS_MODEL_TOKEN` from worker environment.
+- SDK client uses `baseUrl=<gateway>/v1` and `apiKey=<scoped token>`.
+- Required Codex environment is explicitly allowlisted; bridge does not inherit host environment wholesale.
 
-- [ ] **Step 1: Define bridge protocol types**
+- [ ] **Step 1: Define bridge protocol**
 
 ```ts
 export type BridgeRequest =
@@ -164,29 +221,29 @@ export type BridgeRequest =
   | { request_id: string; op: "run"; session_id: string; prompt: string }
   | { request_id: string; op: "resume"; session_id: string }
   | { request_id: string; op: "close"; session_id: string };
-
-export type BridgeResponse =
-  | { request_id: string; ok: true; result: unknown }
-  | { request_id: string; ok: false; error: { code: string; message: string } };
 ```
+
+Every response is `{request_id, ok, result}` or `{request_id, ok:false, error:{code,message}}`.
 
 - [ ] **Step 2: Add SDK/tooling and lock dependencies**
 
-Use Node 22, install `@openai/codex-sdk`, TypeScript, and the chosen test runner. Commit `package-lock.json` and make `npm ci` the reproducible install path.
+Use Node 22, install current `@openai/codex-sdk`, TypeScript, and test runner; commit `package-lock.json`.
 
-- [ ] **Step 3: Implement bridge process**
+- [ ] **Step 3: Configure SDK securely**
 
-`start` creates a Codex thread in the requested worktree and returns its durable session/thread ID. `run` executes one turn on that session. `resume` verifies/reloads the SDK session identifier. `close` releases local bridge state. All protocol output goes to stdout as JSONL; diagnostics go to stderr.
+Instantiate Codex with gateway URL and scoped token, and an explicit environment map containing only PATH, HOME/CODEX_HOME inside the worker, locale, model-gateway variables, and workload-required nonsecret variables. SDK thread working directory is the task worktree.
 
-- [ ] **Step 4: Write Node protocol tests with a fake SDK adapter**
+- [ ] **Step 4: Implement session lifecycle**
 
-Assert fragmented stdin lines are buffered correctly, malformed JSON returns a typed error, request IDs remain paired with responses, and `resume` returns the original fake session.
+`start` creates a thread and returns ID; `run` executes a turn; `resume` reconstructs thread from persisted ID; `close` drops bridge-local reference. Protocol stdout is JSONL only; diagnostics use stderr.
 
-- [ ] **Step 5: Implement Python bridge client**
+- [ ] **Step 5: Test with local fake Responses server**
 
-Use `asyncio.create_subprocess_exec` with explicit argv. Maintain a pending-request map keyed by `request_id`, parse only JSONL stdout, and persist the returned Codex session/thread ID in attempt metadata.
+Verify bridge sends model request to configured gateway base URL, not OpenAI directly; scoped token is sent as auth to fake gateway; fragmented JSONL handling and resume behavior work.
 
-- [ ] **Step 6: Run bridge tests and commit**
+- [ ] **Step 6: Implement Python client and commit**
+
+Use `asyncio.create_subprocess_exec`; pending request map is keyed by request ID; persist thread ID in attempt metadata.
 
 ```bash
 cd bridge/codex
@@ -195,53 +252,7 @@ npm test
 cd ../..
 uv run pytest tests/integration/agents/test_codex_bridge_fake.py -q
 git add bridge/codex src/infinite_interns/agents/codex.py tests/integration/agents/test_codex_bridge_fake.py
-git commit -m "feat: add structured Codex SDK bridge"
-```
-
-### Task 3: Implement the model gateway and scoped attempt tokens
-
-**Files:**
-- Create: `src/infinite_interns/gateway/capabilities.py`
-- Create: `src/infinite_interns/gateway/app.py`
-- Test: `tests/unit/agents/test_gateway_capabilities.py`
-- Test: `tests/integration/agents/test_gateway.py`
-
-**Interfaces:**
-- `GatewayCapability(run_id, task_id, attempt_id, lease_epoch, providers, models, expires_at)`.
-- `issue_gateway_token(capability: GatewayCapability, signing_key: bytes) -> str`.
-- Gateway verifies current lease epoch before proxying provider traffic.
-- Master provider keys are loaded only by the gateway process.
-
-- [ ] **Step 1: Write expired/stale token tests**
-
-```python
-async def test_stale_epoch_token_is_rejected(client, stale_token: str) -> None:
-    response = await client.post(
-        "/v1/proxy/openai",
-        headers={"Authorization": f"Bearer {stale_token}"},
-        json={"model": "allowed-model", "messages": [{"role": "user", "content": "ping"}]},
-    )
-    assert response.status_code == 403
-```
-
-- [ ] **Step 2: Implement signed short-lived capabilities**
-
-Encode a canonical JSON payload and sign it with HMAC-SHA256. Payload contains run/task/attempt/lease epoch, exact allowed providers/models, and expiry; it contains no provider secret.
-
-- [ ] **Step 3: Implement provider/model allowlists**
-
-A Kimi-only capability cannot call DeepSeek/OpenAI. A capability for one model cannot switch models. Before proxying, query current task lease epoch from the control-plane service/repository and reject stale capabilities.
-
-- [ ] **Step 4: Add redacted gateway logging**
-
-Log provider, model, latency, usage/cost metadata, run/task/attempt IDs, and status. Never persist Authorization values, capability token bodies, prompt secrets, or master provider keys.
-
-- [ ] **Step 5: Run and commit**
-
-```bash
-uv run pytest tests/unit/agents/test_gateway_capabilities.py tests/integration/agents/test_gateway.py -q
-git add src/infinite_interns/gateway tests
-git commit -m "feat: broker model access through scoped gateway"
+git commit -m "feat: run Codex through scoped model gateway"
 ```
 
 ### Task 4: Add Kimi and DeepSeek reviewer adapters
@@ -253,23 +264,19 @@ git commit -m "feat: broker model access through scoped gateway"
 - Test: `tests/unit/agents/test_openai_compatible.py`
 
 **Interfaces:**
-- `KimiBackend` defaults to `k3-256k`; caller may request `k3` for large-context audit.
-- `DeepSeekBackend` defaults to `deepseek-v4-pro` with configured high reasoning/thinking.
-- Both normalize provider responses to `AgentResult`/`ReviewFinding`.
+- `KimiBackend` default logical model `k3-256k`; `k3` for large audit.
+- `DeepSeekBackend` default logical model `deepseek-v4-pro`.
+- Both call ModelGateway using a scoped token and strict structured-output parser.
 
-- [ ] **Step 1: Write HTTP contract tests with `httpx.MockTransport`**
+- [ ] **Step 1: Write MockTransport contract tests**
 
-Assert Kimi requests use `https://api.kimi.com/coding/v1`, DeepSeek requests use `https://api.deepseek.com`, and 429/5xx/provider timeout maps to `ProviderUnavailable` rather than `ENGINEERING_FAILURE`.
+Assert adapter sends provider/model metadata expected by gateway, maps 429/5xx/timeouts to `ProviderUnavailable`, and never classifies provider transport failure as engineering failure.
 
-- [ ] **Step 2: Implement shared OpenAI-compatible transport**
+- [ ] **Step 2: Implement shared compatible adapter**
 
-Create a transport that accepts `base_url`, gateway token, model, JSON schema, timeout, and request metadata. Parse response JSON into Pydantic. If content fails schema validation, allow exactly one schema-repair request and persist both attempt metadata records.
+Accept gateway URL/token, provider, model, prompt payload, response schema, timeout. Parse model content into Pydantic. Allow one schema-repair turn after invalid structured output and preserve both usage records.
 
-- [ ] **Step 3: Implement provider defaults**
-
-Kimi uses `k3-256k` normally and `k3` only when `large_context=True`. DeepSeek uses `deepseek-v4-pro` and explicit provider request fields for high reasoning/thinking supported by the adapter contract.
-
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 3: Implement provider defaults and commit**
 
 ```bash
 uv run pytest tests/unit/agents/test_openai_compatible.py -q
@@ -286,35 +293,61 @@ git commit -m "feat: add Kimi and DeepSeek adversarial backends"
 - Test: `tests/unit/context/test_builder.py`
 
 **Interfaces:**
-- `ContextPacket` contains role, objective, success conditions, requirement refs, architecture refs, protected paths, relevant paths, dependency outputs, current failures, available tools, required evidence, deadline, budget, and `generated_at_commit`.
-- `ContextBuilder.build(task_id: TaskId, role: AgentRole, commit: str) -> ContextPacket`.
-- `ContextBuilder.is_fresh(packet: ContextPacket, current_commit: str) -> bool`.
+- `ContextPacket` contains role/objective/success conditions, requirement/spec/architecture refs, protected paths, relevant paths, dependency outputs, current failures, available tools, required evidence, deadline/budget, and `generated_at_commit`.
+- `ContextBuilder.build(task_id, role, commit) -> ContextPacket`.
+- `ContextBuilder.is_fresh(packet, current_commit) -> bool`.
 
 - [ ] **Step 1: Write minimal-context test**
 
-Create a fixture repository where a task affects `src/search/**`. Assert unrelated `docs/payments.md` and `src/payments/**` are absent from the initial packet, while the mapped search files and requirement are present.
+Fixture task maps to `src/search/**`; initial packet contains mapped search sources/tests/architecture refs and excludes unrelated payments subtree/docs.
 
 - [ ] **Step 2: Write freshness test**
 
-Generate a packet at commit A, change a relevant source file at commit B, and assert `is_fresh(packet, B)` is false. Change only an unrelated documentation file and assert the packet remains usable if its referenced inputs are unchanged.
+Relevant file changed after packet commit -> false. Unrelated file changed with no dependency edge -> packet can remain usable.
 
 - [ ] **Step 3: Implement repository map**
 
-Index paths, detected language/module role, direct imports where parseable, test/source relation by naming/path convention, requirement/file links from task/evidence metadata, and architecture refs. Unsupported language parsers fall back to deterministic path/text indexing.
+Index file roles/languages, imports where parseable, source-test relations, routes/DB entities using adapters, requirement/task/file/evidence links, and architecture refs. Unsupported languages fall back to path/text map.
 
-- [ ] **Step 4: Implement progressive packet builder**
+- [ ] **Step 4: Implement progressive disclosure**
 
-Initial packet contains summaries/references, not raw large logs or entire repository bodies. Large observations remain artifact URIs; expose explicit lookup methods for file excerpts, artifact slices, and related decisions.
+Initial packet uses summaries/URIs for large evidence; expose explicit lookups for source excerpts, log slices, decisions, warnings, and dependency outputs.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-uv run pytest tests/unit/context -q
+uv run pytest tests/unit/context/test_builder.py -q
 git add src/infinite_interns/context tests/unit/context
 git commit -m "feat: generate commit-aware task contexts"
 ```
 
-### Task 6: Version role prompts and enforce cold reviewer packets
+### Task 6: Implement validated durable memory
+
+**Files:**
+- Create: `src/infinite_interns/context/memory.py`
+- Create: `tests/unit/context/test_memory.py`
+
+**Interfaces:**
+- Memory kinds: `DECISION`, `RULE`, `LEARNING`, `WARNING`, `DEBT`, `ASSUMPTION`.
+- `MemoryCandidate` must link evidence refs or an accepted architecture/spec decision before promotion to `MemoryRecord` for durable retrieval.
+
+- [ ] **Step 1: Write rejection test**
+
+A model candidate saying “always disable retries” with no evidence/decision reference is rejected. A learning referencing reproduced flaky-test root cause and repair evidence is accepted.
+
+- [ ] **Step 2: Implement memory service**
+
+Persist concise statement, kind, scope, source refs, validating evidence/decision refs, introduced-at commit, and invalidated-at commit. Never persist reasoning transcript as memory body.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+uv run pytest tests/unit/context/test_memory.py -q
+git add src/infinite_interns/context/memory.py tests/unit/context/test_memory.py
+git commit -m "feat: persist evidence-backed engineering memory"
+```
+
+### Task 7: Version prompts and enforce cold reviewer contexts
 
 **Files:**
 - Create: `prompts/implementer.md`
@@ -325,37 +358,29 @@ git commit -m "feat: generate commit-aware task contexts"
 - Test: `tests/unit/agents/test_prompting.py`
 
 **Interfaces:**
-- `PromptRef(name: str, version: str, sha256: str)`.
-- `PromptRegistry.load(name: str) -> PromptTemplate`.
-- Reviewer renderer accepts only `ReviewerContext`, which intentionally has no implementer-transcript field.
+- `PromptRef(name, version, sha256)`.
+- `ReviewerContext` has no implementer-transcript/reasoning field and forbids extras.
 
-- [ ] **Step 1: Write reviewer isolation test**
+- [ ] **Step 1: Write reviewer-isolation test**
 
-Pass a dictionary containing `implementer_transcript` to `ReviewerContext.model_validate`. Expected: `ValidationError` because models use `extra="forbid"`.
+`ReviewerContext.model_validate` with `implementer_transcript` must raise `ValidationError`.
 
-- [ ] **Step 2: Write concise role contracts**
+- [ ] **Step 2: Write role contracts**
 
-Implementer prompt: inspect before editing, satisfy supplied task, run deterministic local QA, create coherent candidate commit, and never claim a requirement is verified.
+Implementer: inspect, implement smallest coherent solution, deterministic QA, candidate commit, never verify requirement.
+Reviewer: original requirement + diff + repo/evidence only; return typed findings.
+Adversary: find behavioral/security/integration gaps with reproduction strategy.
+Diagnostician: analyze repeated evidence and propose materially different root-cause strategy.
 
-Reviewer prompt: inspect original requirement, candidate diff, repository, and evidence; produce only typed blocker/advisory findings with reproduction strategy; do not rely on author reasoning.
-
-Adversary prompt: search for behavioral/security/integration gaps and return structured candidate findings.
-
-Diagnostician prompt: analyze repeated failure evidence and propose a materially different root-cause/repair strategy.
-
-- [ ] **Step 3: Hash/version prompts**
-
-Load prompt bytes, require a version header, compute SHA-256, and include `PromptRef` in every model-call metadata record.
-
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 3: Version/hash prompt bytes and commit**
 
 ```bash
 uv run pytest tests/unit/agents/test_prompting.py -q
 git add prompts src/infinite_interns/agents/prompting.py tests/unit/agents/test_prompting.py
-git commit -m "feat: add versioned isolated agent role prompts"
+git commit -m "feat: add versioned isolated agent prompts"
 ```
 
-### Task 7: Implement review tiers and reproduction routing
+### Task 8: Implement deterministic review tiers and reproduction routing
 
 **Files:**
 - Create: `src/infinite_interns/agents/routing.py`
@@ -365,67 +390,69 @@ git commit -m "feat: add versioned isolated agent role prompts"
 - Test: `tests/integration/agents/test_review_reproduction.py`
 
 **Interfaces:**
-- `ReviewTier`: `STANDARD`, `IMPORTANT`, `CRITICAL`.
-- `RoutingPolicy.for_task(features: TaskFeatures) -> ReviewPlan`.
-- `ReproductionService.enqueue(finding: ReviewFinding) -> ReproductionTask`.
-- Finding dispositions: `PENDING`, `CONFIRMED`, `NOT_REPRODUCED`, `ADVISORY`.
+- Review tiers `STANDARD`, `IMPORTANT`, `CRITICAL`.
+- `RoutingPolicy.for_task(features) -> ReviewPlan`.
+- Finding dispositions `PENDING`, `CONFIRMED`, `NOT_REPRODUCED`, `ADVISORY`.
 
 - [ ] **Step 1: Write routing tests**
 
-Authentication, authorization, migration, and security-sensitive tasks route to `CRITICAL`. Low-risk narrow changes route to `STANDARD`. Two semantically similar failures trigger a diagnostician escalation.
+Auth/authz/migrations/security-sensitive work -> CRITICAL; low-risk narrow work -> STANDARD; two semantically similar failures -> diagnostic escalation.
 
 - [ ] **Step 2: Implement deterministic router**
 
-Router input is task metadata only: risk, touched domains, migration flag, external integration flag, failure count, estimated context size. Models never choose their own review tier.
+Input only risk/domain/migration/external integration/failure count/context-size metadata. No model chooses its own tier.
 
-- [ ] **Step 3: Write false-positive reproduction test**
+- [ ] **Step 3: Write reproduction tests**
 
-Synthetic reviewer claims `GET /health` returns 500; deterministic reproduction receives 200. Assert finding becomes `NOT_REPRODUCED` and no repair task is created.
+False claim `GET /health returns 500` while actual 200 -> NOT_REPRODUCED/no repair task. True claim user B reads user A resource returning 200 instead of 403 -> CONFIRMED/repair task.
 
-- [ ] **Step 4: Write confirmed-defect reproduction test**
-
-Synthetic reviewer claims user B can read user A's record; fixture receives 200 instead of 403. Assert finding becomes `CONFIRMED`, evidence is attached, and one repair task is created.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/agents/test_routing.py tests/integration/agents/test_review_reproduction.py -q
 git add src/infinite_interns/agents/routing.py src/infinite_interns/review tests
-git commit -m "feat: turn model review claims into reproducible work"
+git commit -m "feat: turn review claims into reproducible work"
 ```
 
-### Task 8: Wire task-local implement/review/repair into orchestration
+### Task 9: Wire implement/review/repair and escalation ladder
 
 **Files:**
+- Create: `src/infinite_interns/agents/worker_service.py`
 - Modify: `src/infinite_interns/graph/nodes.py`
 - Modify: `src/infinite_interns/scheduler/service.py`
-- Create: `src/infinite_interns/agents/worker_service.py`
-- Create: `tests/integration/agents/test_stage3_acceptance.py`
+- Create: `tests/integration/agents/test_stage3b_acceptance.py`
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 
 **Interfaces:**
-- `WorkerService.execute_task(attempt: AttemptRecord) -> CandidateResult`.
-- Same Codex session may handle implementation and task-local repair.
-- Reviewer invocation always creates a new session/request with `ReviewerContext`.
+- `WorkerService.execute_task(attempt) -> CandidateResult`.
+- Same task-local Codex session handles normal debug/repair while productive.
+- Escalation levels:
+  - L0 same Codex task-local debugging,
+  - L1 fresh Codex diagnosis + repair,
+  - L2 Kimi independent diagnosis + fresh Codex implementation,
+  - L3 DeepSeek second diagnosis + architecture challenge,
+  - L4 Kimi implementer + Codex reviewer,
+  - L5 decompose/replan/alternate architecture,
+  - still impossible -> BLOCKED.
 
-- [ ] **Step 1: Build seeded-defect fixture repository**
+- [ ] **Step 1: Build seeded-defect fixture**
 
-Fixture contains one API validation defect, a deterministic visible test command, a hidden reproduction script, and unrelated passing tests.
+One API validation defect, visible deterministic tests, hidden reproduction script, unrelated passing tests.
 
-- [ ] **Step 2: Exercise implementation/fix cycle**
+- [ ] **Step 2: Run deterministic fake implementation/review cycle in CI**
 
-CI uses a deterministic fake backend applying the known patch. Provider opt-in test uses the real Codex bridge. In both modes, the worker result is a candidate commit and deterministic QA evidence, not a verified requirement.
+Fake implementer produces known patch and candidate SHA. QA passes. Fresh fake reviewer returns one false and one true finding. Reproduction discards false, confirms true, repair cycle produces final candidate.
 
-- [ ] **Step 3: Assert fresh reviewer context**
+- [ ] **Step 3: Assert reviewer isolation and escalation accounting**
 
-Capture backend requests and assert the implementation session ID is absent from reviewer metadata/content. Reviewer gets requirement, diff, repository refs, and current evidence only.
+Implementation session ID never appears in reviewer context. Attempt/escalation records persist level, provider/model/prompt refs, cause, cost, and outcome.
 
-- [ ] **Step 4: Inject one false and one true reviewer finding**
+- [ ] **Step 4: Add optional real-provider smoke**
 
-Assert only the reproduced true defect creates repair work. After repair, rerun deterministic QA and a fresh review according to the routing tier.
+When scoped gateway/provider credentials exist, run one Codex task through gateway and one Kimi/DeepSeek structured review. This job is opt-in and budget-bounded, not required for ordinary CI.
 
-- [ ] **Step 5: Run stage gate and commit**
+- [ ] **Step 5: Run Stage 3B gate and commit**
 
 ```bash
 uv run ruff check .
@@ -436,18 +463,21 @@ cd bridge/codex
 npm test
 cd ../..
 git add src tests prompts bridge README.md AGENTS.md
-git commit -m "feat: complete typed multi-model worker pipeline"
+git commit -m "feat: complete scoped multi-model worker pipeline"
 ```
 
-## Stage 3 completion gate
+## Stage 3B completion gate
 
 Required evidence:
 
-- Codex bridge protocol is structured and resumable at task scope,
+- Codex SDK traffic is routed through scoped gateway instead of master credential in worker,
+- bridge session can resume within task,
 - provider failures are infrastructure failures,
-- Kimi/DeepSeek responses are schema validated,
-- context packets are commit-aware and minimal,
-- reviewer contexts cannot contain implementer reasoning fields,
-- false-positive findings can be rejected by reproduction,
+- Kimi/DeepSeek structured output is schema validated,
+- context packets are commit-aware/minimal,
+- durable memory requires evidence/accepted decisions,
+- reviewers cannot inherit implementer transcript,
+- false model findings can be rejected by reproduction,
 - confirmed findings create repair work,
-- no provider/model output directly marks requirement or release success.
+- escalation is bounded and changes strategy,
+- no model output directly marks requirement/release/run success.
