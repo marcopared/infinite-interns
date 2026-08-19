@@ -3,8 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-import infinite_interns.domain.enums as enums
-import infinite_interns.domain.models as models
+from infinite_interns.domain import enums, models
 
 
 EXPECTED_REQUIREMENT_STATUSES = {
