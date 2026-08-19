@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from infinite_interns.db.models import IntegrationStateRow
