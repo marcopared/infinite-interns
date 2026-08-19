@@ -470,9 +470,6 @@ uv run pyright
 uv run pytest tests/unit -q
 uv run pytest tests/integration -q
 uv run pytest tests/chaos -q
-cd bridge/codex
-npm test
-cd ../..
 ```
 
 - [ ] **Step 5: Run meta certification**
