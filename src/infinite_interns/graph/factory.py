@@ -5,7 +5,6 @@ from langgraph.graph import END, START, StateGraph
 from infinite_interns.graph.nodes import load_run, schedule, wait_or_finish
 from infinite_interns.graph.state import FactoryState
 
-
 _builder = StateGraph(FactoryState)
 _builder.add_node("load_run", load_run)
 _builder.add_node("schedule", schedule)
