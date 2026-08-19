@@ -26,10 +26,12 @@ class ReleasePolicy(StrictEvidenceModel):
     gates: tuple[GateRequirement, ...]
 
     @model_validator(mode="after")
-    def validate_unique_gate_identity(self) -> "ReleasePolicy":
+    def validate_gate_policy(self) -> "ReleasePolicy":
         identities = [(gate.gate_id, gate.requirement_id) for gate in self.gates]
         if len(identities) != len(set(identities)):
             raise ValueError("release policy contains duplicate gate identity")
+        if not any(gate.mandatory for gate in self.gates):
+            raise ValueError("release policy requires at least one mandatory gate")
         return self
 
 
