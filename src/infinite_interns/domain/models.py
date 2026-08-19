@@ -1,11 +1,12 @@
 """Immutable domain records for deterministic factory state."""
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .enums import EvidenceResult, RequirementStatus, RiskClass, RunStatus, TaskStatus
-from .ids import EvidenceId, RequirementId, RunId, TaskId
+from .ids import EventId, EvidenceId, RequirementId, RunId, TaskId
 
 
 class StrictModel(BaseModel):
@@ -48,3 +49,13 @@ class RunRecord(StrictModel):
     base_commit: str
     status: RunStatus
     started_at: datetime
+
+
+class EventRecord(StrictModel):
+    event_id: EventId
+    run_id: RunId
+    event_type: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime
