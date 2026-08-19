@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: infinite_interns
+      POSTGRES_USER: interns
+      POSTGRES_PASSWORD: interns
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interns -d infinite_interns"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks: [control]
+
+  redis:
+    image: redis:7-alpine
+    networks: [control]
+
+  agent-server:
+    build:
+      context: .
+      dockerfile: docker/agent-server/Dockerfile
+    environment:
+      INFINITE_INTERNS_DATABASE_URL: postgresql+psycopg://interns:interns@postgres:5432/infinite_interns
+      INFINITE_INTERNS_EXECUTOR_URL: http://executor:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "2024:2024"
+    networks: [control]
+
+  executor:
+    build:
+      context: .
+      dockerfile: executor/Dockerfile
+    environment:
+      INFINITE_INTERNS_FACTORY_ROOT: /tmp/infinite-interns
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/infinite-interns:/tmp/infinite-interns
+    networks: [control]
+
+networks:
+  control:
+    internal: true
