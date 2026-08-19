@@ -34,3 +34,24 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/integration -q
       - run: uv run pyright
+      - name: Smoke LangGraph Agent Server
+        run: |
+          : > .env
+          uv run langgraph dev --no-browser > /tmp/langgraph-dev.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:2024/api/health > /tmp/health.json; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/health.json").read_text())
+          assert payload == {"status": "ok"}, payload
+          PY
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/langgraph-dev.log
+          exit 1
