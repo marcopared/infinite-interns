@@ -3,6 +3,7 @@
 import heapq
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from infinite_interns.domain.enums import TaskStatus
 
@@ -36,8 +37,12 @@ class TaskDag:
             children.setdefault(dependent, set())
 
         return cls(
-            parents_by_task={task: frozenset(values) for task, values in parents.items()},
-            children_by_task={task: frozenset(values) for task, values in children.items()},
+            parents_by_task=MappingProxyType(
+                {task: frozenset(values) for task, values in parents.items()}
+            ),
+            children_by_task=MappingProxyType(
+                {task: frozenset(values) for task, values in children.items()}
+            ),
         )
 
     @property
