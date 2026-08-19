@@ -21,3 +21,9 @@ Task 1: GREEN verified — Actions run `32208873899`: uv sync PASS, Ruff PASS, u
 Task 1: minor (deferred): `uv.lock` not materialized by current controller environment; CI resolves dependencies successfully but reproducibility debt remains.
 
 Task 1: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-1-review.md`).
+
+Task 2: RED verified — Actions run `32209130473` proved the required domain types were absent; run `32209398021` separately proved the intermediate run `pass` state violated the self-review invariant.
+
+Task 2: GREEN verified — Actions run `32209435883`: uv sync PASS, Ruff PASS, all unit tests PASS, Pyright PASS.
+
+Task 2: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-2-review.md`).
