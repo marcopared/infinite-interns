@@ -41,3 +41,9 @@ Task 4: implementation discovery — first DB run migrated successfully but expo
 Task 4: GREEN verified — Actions run `32210185676`: uv sync PASS, Ruff PASS, unit tests PASS, Alembic upgrade PASS, PostgreSQL integration PASS, Pyright PASS.
 
 Task 4: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-4-review.md`).
+
+Task 5: RED verified — Actions run `32210388262` passed Ruff and failed the unit suite because `FilesystemArtifactStore` was absent.
+
+Task 5: GREEN verified — Actions run `32210447099`: uv sync PASS, Ruff PASS, unit tests PASS, Alembic upgrade PASS, PostgreSQL integration PASS, Pyright PASS.
+
+Task 5: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-5-review.md`).
