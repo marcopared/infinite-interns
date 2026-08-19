@@ -1,6 +1,6 @@
 # Task 1 report
 
-Status: DONE_WITH_CONCERNS
+Status: complete.
 
 ## RED evidence
 
@@ -38,7 +38,8 @@ uv run pyright                PASS
 - Local PostgreSQL 16 Compose service.
 - Baseline GitHub Actions lint/test/typecheck gate.
 - Runtime/cache ignore rules.
+- Generated and committed `uv.lock`; CI now enforces `uv sync --dev --locked`.
 
-## Concern
+## Reproducibility follow-up
 
-`uv.lock` is not yet committed because the current controller sandbox cannot execute `uv lock` or clone GitHub locally. CI successfully resolves the dependency set with uv. The Stage 1 ledger records the ruling to keep `uv sync --dev` temporarily and close the lockfile reproducibility debt before Stage 1 completion if a lock-generating execution path becomes available.
+The original controller sandbox could not materialize `uv.lock`, so Task 1 initially carried a minor reproducibility debt. A one-shot GitHub Actions workflow later ran `uv lock` on the implementation branch and committed the generated lockfile. The temporary workflow was then removed and normal CI was switched to locked synchronization. The debt is resolved.
