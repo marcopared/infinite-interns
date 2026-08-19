@@ -61,6 +61,11 @@ async def test_fake_worker_commits_only_inside_task_worktree(tmp_path: Path) -> 
 
     handle = await backend.create(request)
     try:
+        restarted_backend = DockerExecutionBackend()
+        recovered = await restarted_backend.create(request)
+        assert recovered.execution_id == handle.execution_id
+
+        status = ExecutionStatus.CREATED
         for _ in range(60):
             status = await backend.status(handle)
             if status in {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED}:
