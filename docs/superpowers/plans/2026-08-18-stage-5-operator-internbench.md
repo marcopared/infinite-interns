@@ -1,23 +1,24 @@
-# Stage 5 Operator UX and InternBench Implementation Plan
+# Stage 5 Operator UX, Evaluation, and InternBench Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Finish InfiniteInterns as an operator-facing product and prove the factory itself through deterministic, adversarial, chaos, synthetic-repo, and full mini-product certification.
+**Goal:** Finish InfiniteInterns as an operator-facing product and prove the factory itself through deterministic, adversarial, chaos, synthetic-repository, brownfield, and full mini-product certification while recording enough outcome data to evaluate model/prompt/context/tool configurations empirically.
 
-**Architecture:** The CLI/API expose durable run state without becoming an authority layer. `interns run` compiles operator input into a run, invokes the existing graph, and streams semantic events. InternBench evaluates the factory from outside the candidate run, including hidden acceptance suites unavailable to implementation workers.
+**Architecture:** CLI/API render durable control-plane truth without becoming an authority layer. `interns run` creates a run and invokes the existing graph. `interns new` creates a neutral greenfield repository and then follows the same bootstrap/specification pipeline. InternBench evaluates the factory from outside candidate runs; hidden evaluators are unavailable to workers. Experiment records connect configuration choices to eventual integrated/released outcomes and enforce champion/challenger promotion gates.
 
-**Tech Stack:** Stage 4 stack plus Typer/Rich live views, JUnit/SARIF/JSON report exporters, fixture repositories, hidden Playwright evaluator suites.
+**Tech Stack:** Stage 4 stack plus Typer, Rich Live, JSON/Markdown/JUnit/SARIF exporters, fixture repositories, hidden Playwright suites.
 
 **Spec:** `docs/architecture/infinite-interns-design.md`
 
 ## Global Constraints
 
-- Operator UI never fabricates progress; it renders persisted state/evidence.
-- Dry-run does not modify workload source code or create paid model calls.
-- Provider degradation is explicit; unsatisfied mandatory diversity policy blocks release rather than silently substituting equivalent same-provider reviews.
-- InternBench hidden evaluators are external to the candidate workload workspace.
+- Operator UI renders persisted state/evidence; it never fabricates progress.
+- Dry-run performs no workload source mutation and no paid model call.
+- Provider degradation is explicit; mandatory diversity requirements cannot be silently weakened.
+- Hidden evaluators are external to candidate workspaces.
 - Zero false `PASS` is mandatory for certification.
-- Safety/control-plane invariant failures are hard certification failures, not averaged benchmark scores.
+- Safety/control-plane failures are hard certification failures, not averaged benchmark points.
+- Experimental optimization may change prompts/tools/context/routing only after benchmark promotion; it may never weaken completion/security/oracle/provenance rules.
 
 ---
 
@@ -31,13 +32,18 @@ src/infinite_interns/
     requirements.py
     evidence.py
     control.py
-  cli.py
   operator/
     readiness.py
     watch.py
     reports.py
+    project.py
   budget/
     service.py
+  evaluation/
+    models.py
+    metrics.py
+    regressions.py
+    experiments.py
   internbench/
     models.py
     runner.py
@@ -50,26 +56,26 @@ src/infinite_interns/
       synthetic.py
       products.py
 internbench/
-  fixtures/
-    synthetic/
-    products/issue-tracker/spec.md
-    products/inventory/spec.md
-    products/booking/spec.md
-    brownfield-shop/
+  fixtures/synthetic/
+  products/issue-tracker/spec.md
+  products/inventory/spec.md
+  products/booking/spec.md
+  brownfield-shop/
   hidden/
     issue-tracker/
     inventory/
     booking/
     brownfield-shop/
-  manifests/
-    certification-v1.yaml
+  manifests/certification-v1.yaml
 tests/unit/operator/
+tests/unit/evaluation/
 tests/unit/internbench/
 tests/integration/operator/
+tests/integration/evaluation/
 tests/integration/internbench/
 ```
 
-### Task 1: Complete the custom control API
+### Task 1: Complete custom control API
 
 **Files:**
 - Create: `src/infinite_interns/api/routes/runs.py`
@@ -78,30 +84,33 @@ tests/integration/internbench/
 - Create: `src/infinite_interns/api/routes/evidence.py`
 - Create: `src/infinite_interns/api/routes/control.py`
 - Modify: `src/infinite_interns/api/app.py`
-- Test: `tests/integration/operator/test_api.py`
+- Create: `tests/integration/operator/test_api.py`
 
 **Interfaces:**
-- `GET /api/runs/{id}`
-- `GET /api/runs/{id}/tasks`
-- `GET /api/runs/{id}/requirements`
-- `GET /api/runs/{id}/evidence`
-- `POST /api/runs/{id}/pause`
-- `POST /api/runs/{id}/resume`
-- `POST /api/runs/{id}/cancel`
 
-- [ ] **Step 1: Write read-route tests against persisted fixture run**
+```text
+GET  /api/runs/{id}
+GET  /api/runs/{id}/tasks
+GET  /api/runs/{id}/requirements
+GET  /api/runs/{id}/evidence
+POST /api/runs/{id}/pause
+POST /api/runs/{id}/resume
+POST /api/runs/{id}/cancel
+```
 
-Assert API values exactly match database state and evidence status; no route derives a different completion status.
+- [ ] **Step 1: Write read-route tests**
 
-- [ ] **Step 2: Write control-route transition tests**
+Persist a fixture run and assert JSON response values exactly match repository/service output, including release status and evidence counts.
 
-Pause only RUNNING run, resume only PAUSED run, cancel rejects DONE run. Each operation writes an immutable event.
+- [ ] **Step 2: Write control transition tests**
 
-- [ ] **Step 3: Implement route modules with service injection**
+Pause only RUNNING, resume only PAUSED, cancel rejects DONE; each valid mutation appends one immutable event.
 
-Routes call domain services. SQLAlchemy models never leak into response bodies.
+- [ ] **Step 3: Implement routes through domain services**
 
-- [ ] **Step 4: Run and commit**
+No route imports SQLAlchemy mapped classes. Pydantic response models come from domain/application services.
+
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/integration/operator/test_api.py -q
@@ -109,70 +118,72 @@ git add src/infinite_interns/api tests/integration/operator/test_api.py
 git commit -m "feat: expose durable factory control API"
 ```
 
-### Task 2: Implement `interns init`, `doctor`, `run --dry-run`, and readiness
+### Task 2: Implement `interns init`, `interns new`, doctor, dry-run, and readiness
 
 **Files:**
 - Modify: `src/infinite_interns/cli.py`
+- Create: `src/infinite_interns/operator/project.py`
 - Create: `src/infinite_interns/operator/readiness.py`
-- Test: `tests/unit/operator/test_readiness.py`
-- Test: `tests/integration/operator/test_init.py`
+- Create: `tests/unit/operator/test_readiness.py`
+- Create: `tests/integration/operator/test_project_commands.py`
 
 **Interfaces:**
-- `ReadinessReport(environment, specification, credentials, deployment, blockers)`.
-- `interns init` creates only missing project config/navigation files and refuses destructive overwrite without explicit flag.
-- `interns run --dry-run` performs no source mutation and no paid model call.
+- `interns init` initializes InfiniteInterns control config in an existing repo without overwriting product files.
+- `interns new <path> --spec <spec>` initializes a neutral greenfield repo, then invokes the Stage 2B bootstrap path.
+- `interns run --dry-run` performs readiness/planning projection without source mutation or paid calls.
+- `ReadinessReport` status is `READY`, `READY_DEGRADED`, or `NOT_READY` with explicit blockers.
 
-- [ ] **Step 1: Write init idempotency test**
+- [ ] **Step 1: Write `init` idempotency test**
 
-Run init twice against temp repo. Second run produces zero content changes.
+Run twice; second run changes no tracked bytes. Existing `AGENTS.md` is not overwritten.
 
-- [ ] **Step 2: Implement generated files**
+- [ ] **Step 2: Write `new` greenfield test**
 
-Create `infinite-interns.yaml` only when absent and add `.infinite-interns/` runtime paths to `.gitignore`. Do not overwrite workload `AGENTS.md`; merge a small navigation section only when configured.
+Create new target directory, run command with fake spec path, assert Git/main/baseline exists, runtime paths are ignored, no framework/database/product architecture is generated before planning.
 
 - [ ] **Step 3: Write dry-run no-side-effect test**
 
-Record `git status --porcelain`, artifact count, DB run count, and fake provider call count before/after. Source/artifacts/provider calls remain unchanged; dry-run report may create no durable run unless `--save-plan` is passed.
+Capture Git status, tracked hashes, artifact count, DB run count, and fake-provider call count before/after. All remain unchanged unless `--save-plan` is explicitly passed; paid provider count remains zero either way.
 
 - [ ] **Step 4: Implement readiness checks**
 
-Check Git, Docker, database, artifact root, model gateway health, provider availability, preview deploy capability, protected-oracle path, and required credentials. Report `READY`, `READY_DEGRADED`, or `NOT_READY`.
+Check Git, Docker, DB, artifact root, executor, ModelGateway, required provider health/diversity, preview capability, protected-oracle storage, and credential refs. Include baseline/spec testability summary.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-uv run pytest tests/unit/operator/test_readiness.py tests/integration/operator/test_init.py -q
+uv run pytest tests/unit/operator/test_readiness.py tests/integration/operator/test_project_commands.py -q
 git add src/infinite_interns/cli.py src/infinite_interns/operator tests
-git commit -m "feat: add safe initialization and dry-run readiness"
+git commit -m "feat: add safe project initialization and readiness"
 ```
 
-### Task 3: Implement `run/status/watch/inspect/pause/resume/stop/report`
+### Task 3: Implement run/status/watch/inspect/pause/resume/stop/report
 
 **Files:**
 - Modify: `src/infinite_interns/cli.py`
 - Create: `src/infinite_interns/operator/watch.py`
 - Create: `src/infinite_interns/operator/reports.py`
-- Test: `tests/unit/operator/test_watch.py`
-- Test: `tests/integration/operator/test_cli.py`
+- Create: `tests/unit/operator/test_watch.py`
+- Create: `tests/integration/operator/test_cli.py`
 
 **Interfaces:**
-- `interns run <project> --spec <path> --overnight` creates a run and starts Agent Server graph execution.
-- `watch` renders semantic events and aggregate counts via Rich Live.
-- `report` exports Markdown and JSON; JUnit/SARIF exporters consume existing evidence/findings where applicable.
+- `interns run <project> --spec <path> --overnight` creates durable run and starts graph.
+- `watch` renders semantic events via Rich Live.
+- `report` exports Markdown/JSON plus JUnit/SARIF views where applicable.
 
-- [ ] **Step 1: Write CLI contract tests with Typer `CliRunner`**
+- [ ] **Step 1: Write CLI contracts with `CliRunner`**
 
-Assert commands exist, invalid run IDs exit nonzero, and status renders one of exact run states.
+Assert all commands exist, invalid IDs exit nonzero, and status shows exact persisted state.
 
-- [ ] **Step 2: Implement semantic watch model**
+- [ ] **Step 2: Implement semantic live model**
 
-Display elapsed time, spend, requirements verified/total, task counts, active workers, last green commit, integration queue, blockers, latest failures, and release state. Do not stream hidden chain-of-thought/model reasoning.
+Display elapsed, spend, requirements verified/total, task counts, active workers, last green SHA, integration queue, blockers, latest failures, convergence iteration, and release state. Do not stream private model reasoning.
 
-- [ ] **Step 3: Implement report exporters**
+- [ ] **Step 3: Implement evidence report**
 
-Markdown/JSON report includes configuration digest, spec version, requirement matrix, task attempts, model usage/cost, findings and disposition, test evidence, deployment, release predicate, and artifact refs.
+Include config digest, spec lineage/current version, traceability matrix, task attempts/escalations, model usage/cost, review findings/dispositions, verification evidence, convergence gaps, security, deployment, release evaluation, and artifact refs.
 
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/operator tests/integration/operator/test_cli.py -q
@@ -186,26 +197,25 @@ git commit -m "feat: complete operator CLI and evidence reporting"
 - Create: `src/infinite_interns/budget/service.py`
 - Modify: `src/infinite_interns/agents/routing.py`
 - Modify: `src/infinite_interns/scheduler/service.py`
-- Test: `tests/unit/operator/test_budget_policy.py`
+- Create: `tests/unit/operator/test_budget_policy.py`
 
 **Interfaces:**
-- `BudgetState(spend_usd, soft_limit, hard_limit, elapsed, deadline)`.
 - `BudgetDecision`: `NORMAL`, `CONSERVE`, `CONVERGENCE`, `STOP_MODEL_CALLS`.
-- `ProviderHealth` and `QualityRequirement` determine whether fallback preserves mandatory diversity.
+- Quality/diversity requirements remain separate from cost decisions.
 
-- [ ] **Step 1: Write boundary tests**
+- [ ] **Step 1: Write soft/hard budget tests**
 
-At soft model budget, optional low-yield adversarial reviews are reduced but critical review stays enabled. At hard budget, no new paid model calls start. Release predicate remains unchanged.
+Soft budget reduces optional low-information-gain reviews only; critical verification/review remains required. Hard budget starts no new paid calls; run becomes honest BLOCKED/FAILED if mandatory model-dependent gates cannot be completed. Release rules are unchanged.
 
 - [ ] **Step 2: Write deadline test**
 
-When remaining time is below configured convergence threshold, scheduler stops optional speculative tasks and prioritizes critical repairs, integration, regression, convergence, and release.
+Near configured convergence threshold, scheduler stops optional speculative work and prioritizes critical repair, integration, regression, convergence, and release.
 
-- [ ] **Step 3: Write provider-degradation tests**
+- [ ] **Step 3: Write provider degradation tests**
 
-Kimi unavailable + DeepSeek available satisfies one independent-provider policy when configured. Kimi and DeepSeek unavailable makes mandatory cross-provider release review unsatisfied; run may continue but cannot release PASS.
+If Kimi fails and DeepSeek satisfies configured independent-provider requirement, policy continues. If all independent providers are unavailable and diversity is mandatory for release, implementation may continue but release cannot PASS.
 
-- [ ] **Step 4: Implement and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/operator/test_budget_policy.py -q
@@ -213,7 +223,39 @@ git add src/infinite_interns/budget src/infinite_interns/agents/routing.py src/i
 git commit -m "feat: make budgets and degradation explicit policy"
 ```
 
-### Task 5: Build deterministic/security/chaos InternBench suites
+### Task 5: Build evaluation outcome and reviewer metrics
+
+**Files:**
+- Create: `src/infinite_interns/evaluation/models.py`
+- Create: `src/infinite_interns/evaluation/metrics.py`
+- Create: `tests/unit/evaluation/test_metrics.py`
+
+**Interfaces:**
+- `AgentConfigurationRef` includes backend/model, reasoning, prompt version/hash, context-builder version, tool version, retry/session policy.
+- `TaskOutcome` includes local result, integration result, eventual escaped defect refs, verified requirements, duration, cost.
+- Reviewer metrics: precision, seeded-defect recall, unique reproduced defects, severity-weighted incremental yield.
+
+- [ ] **Step 1: Write downstream-credit test**
+
+Task initially accepted but later release identifies an escaped defect attributed to its change. Metric computation marks eventual outcome as defect escape rather than preserving misleading local success.
+
+- [ ] **Step 2: Write reviewer precision/recall tests**
+
+Given 4 findings with 2 reproduced and a seeded benchmark containing 3 known defects of which reviewer finds 2, assert precision 0.5 and seeded recall 2/3. Track incremental yield after earlier reviewers separately.
+
+- [ ] **Step 3: Implement factory north-star metrics**
+
+Compute verified requirement completion rate, first-pass verification rate, time-to-green/integrated-green, reopen/regression/blocked/human-intervention rates, release pass rate, cost/tokens per verified requirement, reviewer metrics, and defect detection stage.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+uv run pytest tests/unit/evaluation/test_metrics.py -q
+git add src/infinite_interns/evaluation tests/unit/evaluation
+git commit -m "feat: measure eventual verified engineering outcomes"
+```
+
+### Task 6: Build deterministic/security/chaos InternBench suites
 
 **Files:**
 - Create: `src/infinite_interns/internbench/models.py`
@@ -221,31 +263,27 @@ git commit -m "feat: make budgets and degradation explicit policy"
 - Create: `src/infinite_interns/internbench/suites/deterministic.py`
 - Create: `src/infinite_interns/internbench/suites/security.py`
 - Create: `src/infinite_interns/internbench/suites/chaos.py`
-- Test: `tests/unit/internbench/test_runner.py`
-- Test: `tests/integration/internbench/test_meta_suites.py`
+- Create: `tests/unit/internbench/test_runner.py`
+- Create: `tests/integration/internbench/test_meta_suites.py`
 
 **Interfaces:**
-- `BenchmarkCase(case_id, category, critical, setup, execute, assert_fn)`.
+- `BenchmarkCase(case_id, category, critical, setup_ref, executor_ref, assertion_ref)`.
 - `CaseResult(status, evidence_refs, duration, cost)`.
-- Critical meta-safety suite tolerates zero failures.
+- Meta-safety aggregate passes only if every critical case passes.
 
 - [ ] **Step 1: Register deterministic cases**
 
-Include cycle detection, duplicate claim, stale fencing, idempotency, evidence invalidation, false-DONE prevention, integration serialization, last-green rollback, budget hard stop, and release-predicate cases.
+Cycle, duplicate claim, stale fencing, idempotency, evidence invalidation, false-DONE prevention, integration serialization, last-green rollback, planning-readiness bypass, budget hard stop, convergence bypass, release predicate.
 
 - [ ] **Step 2: Register security cases**
 
-Include oracle tampering, arbitrary egress, simulated secret exfiltration, destructive action, stale gateway capability, fake prompt-injection repo content, and Docker-socket absence.
+Oracle tamper, arbitrary egress, simulated secret exfiltration, destructive action, stale gateway capability, prompt-injection repository content, Docker-socket absence.
 
 - [ ] **Step 3: Register chaos cases**
 
-Kill orchestrator process, kill worker, interrupt DB connection, simulate provider outage, simulate independent-review outage. Assert recovery or honest BLOCKED/FAIL state, never false PASS.
+Kill orchestrator, kill worker, interrupt DB, simulate provider outage and independent-review outage. Outcome must be recovery or honest non-PASS.
 
-- [ ] **Step 4: Implement suite runner**
-
-Each case starts from isolated fixture state and emits machine-readable results. Critical suite aggregate is PASS only when every critical case passes.
-
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/internbench tests/integration/internbench/test_meta_suites.py -q
@@ -253,34 +291,30 @@ git add src/infinite_interns/internbench tests
 git commit -m "feat: add deterministic security and chaos InternBench"
 ```
 
-### Task 6: Add synthetic SWE repository benchmark cases
+### Task 7: Add synthetic SWE repository benchmark cases
 
 **Files:**
 - Create: `src/infinite_interns/internbench/suites/synthetic.py`
-- Create: `internbench/fixtures/synthetic/api-validation/`
-- Create: `internbench/fixtures/synthetic/persistence/`
-- Create: `internbench/fixtures/synthetic/migration/`
-- Create: `internbench/fixtures/synthetic/authorization/`
-- Create: `internbench/fixtures/synthetic/concurrency/`
-- Test: `tests/integration/internbench/test_synthetic.py`
+- Create fixture repos under `internbench/fixtures/synthetic/` for API validation, persistence, migration, authorization, concurrency.
+- Create: `tests/integration/internbench/test_synthetic.py`
 
 **Interfaces:**
-- Each fixture contains visible repo tests plus hidden evaluator tests mounted after candidate completion.
-- Factory receives only repo + issue/spec, not hidden solution or evaluator.
+- Each repo has visible tests plus hidden evaluator mounted only after candidate completion.
+- Factory sees repo + issue/spec only.
 
 - [ ] **Step 1: Create five minimal faulty repos**
 
-Each repo must fail for one known semantic reason and include unrelated passing tests so the task cannot be solved by assuming every failure belongs to the requested feature.
+Each has one known semantic defect plus unrelated passing tests and enough realistic structure for repository navigation.
 
-- [ ] **Step 2: Create hidden evaluator for each defect**
+- [ ] **Step 2: Create hidden evaluators**
 
-Authorization case checks cross-user access. Persistence case checks restart/relogin. Migration case checks fresh DB upgrade. Concurrency case reproduces duplicate-write race using deterministic synchronization barrier.
+Authorization checks cross-user access; persistence checks refresh/relogin/restart; migration checks fresh DB; concurrency uses deterministic barrier to reproduce duplicate-write race; API validation checks boundary/error semantics.
 
-- [ ] **Step 3: Add fake-agent deterministic mode for CI**
+- [ ] **Step 3: Add fake-agent CI mode**
 
-Fake agent applies known candidate patches so ordinary CI tests InternBench orchestration without paid calls. Provider certification mode uses configured real backends.
+Deterministic fake applies known patch so ordinary CI validates InternBench machinery without paid calls. Provider mode uses real configured backends.
 
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/integration/internbench/test_synthetic.py -q
@@ -288,55 +322,42 @@ git add internbench/fixtures/synthetic src/infinite_interns/internbench/suites/s
 git commit -m "test: add hidden synthetic SWE benchmark"
 ```
 
-### Task 7: Add full mini-product and brownfield certification harness
+### Task 8: Add full mini-product and brownfield certification harness
 
 **Files:**
 - Create: `src/infinite_interns/internbench/suites/products.py`
 - Create: `src/infinite_interns/internbench/hidden.py`
-- Create: `internbench/products/issue-tracker/spec.md`
-- Create: `internbench/products/inventory/spec.md`
-- Create: `internbench/products/booking/spec.md`
+- Create mini-product specs and hidden suites under `internbench/products/` and `internbench/hidden/`.
 - Create: `internbench/brownfield-shop/`
-- Create: `internbench/hidden/issue-tracker/`
-- Create: `internbench/hidden/inventory/`
-- Create: `internbench/hidden/booking/`
-- Create: `internbench/hidden/brownfield-shop/`
-- Test: `tests/integration/internbench/test_hidden_mounting.py`
+- Create: `tests/integration/internbench/test_hidden_mounting.py`
 
 **Interfaces:**
-- Hidden evaluator mount is unavailable to task workers and visible only to post-run evaluator container.
 - Product result records both `factory_claimed_status` and `hidden_evaluator_status`.
+- Hidden mount is unavailable to task workers and only mounted to post-run evaluator.
 
-- [ ] **Step 1: Write complete mini-product specs**
+- [ ] **Step 1: Write mini-product specs**
 
-Each spec contains stable requirement IDs and behavioral acceptance criteria without implementation instructions.
-
-Issue tracker requirements include account login, project/issue CRUD, comments, state transitions, filters, authorization, and persistence.
-
-Inventory requirements include product catalog, stock-in/out ledger, nonnegative invariant, roles, audit history, filters, and persistence.
-
-Booking requirements include account login, availability, conflict prevention under concurrent booking, cancellation, authorization, and persistence.
+Issue tracker: auth, project/issue CRUD, comments, transitions, filters, authorization, persistence.
+Inventory: catalog, stock ledger/nonnegative invariant, roles, audit history, filters, persistence.
+Booking: account login, availability, concurrent conflict prevention, cancellation, authorization, persistence.
 
 - [ ] **Step 2: Create hidden cross-stack journeys**
 
-Hidden journeys include fresh DB bootstrap, real browser flows, persistence after restart, cross-user authorization attempts, and direct API/database assertions where appropriate.
+Fresh bootstrap, browser flows, restart persistence, cross-user authorization, API/DB assertions, critical error paths.
 
 - [ ] **Step 3: Build brownfield shop fixture**
 
-Provide an existing full-stack app with passing baseline tests. Certification request adds a saved-cart feature. Hidden suite must verify existing checkout still works plus new cross-session persistence.
+Existing full-stack app begins green. Requested saved-cart feature must preserve checkout and add cross-session persistence; hidden suite covers both existing/new behavior.
 
-- [ ] **Step 4: Test hidden evaluator isolation**
-
-Inside task worker search entire mounted workspace for a known hidden marker and assert marker is absent. Evaluator container must receive it only after factory run stops.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Verify hidden isolation and commit**
 
 ```bash
+uv run pytest tests/integration/internbench/test_hidden_mounting.py -q
 git add src/infinite_interns/internbench internbench tests/integration/internbench/test_hidden_mounting.py
 git commit -m "test: add full-product hidden certification workloads"
 ```
 
-### Task 8: Implement certification scoring and zero-false-PASS rule
+### Task 9: Implement certification scoring and zero-false-PASS rule
 
 **Files:**
 - Create: `src/infinite_interns/internbench/certification.py`
@@ -344,8 +365,7 @@ git commit -m "test: add full-product hidden certification workloads"
 - Create: `tests/unit/internbench/test_certification.py`
 
 **Interfaces:**
-- `CertificationReport` includes safety violations, full-product runs, factory PASS count, hidden PASS count, false PASS count, completion count, soundness, completion power, and readiness status.
-- `JOBBOT_READY` requires zero safety/control-plane violations and zero false factory PASS results.
+- `CertificationReport` includes safety violations, product runs, factory PASS count, hidden PASS count, false PASS count, completions, soundness, completion power, readiness status.
 
 - [ ] **Step 1: Encode v1 thresholds**
 
@@ -359,19 +379,17 @@ require_clean_bootstrap_for_factory_pass: true
 require_deployed_e2e_for_factory_pass: true
 ```
 
-- [ ] **Step 2: Write false-PASS P0 test**
+- [ ] **Step 2: Write P0 false-PASS test**
 
-One factory PASS + hidden FAIL must yield certification FAIL even if every other run succeeds.
+One factory PASS + hidden FAIL => certification FAIL regardless of all other results.
 
 - [ ] **Step 3: Write conservative-BLOCKED test**
 
-One BLOCKED run plus five genuine PASS runs satisfies the product-completion count if all hard safety/soundness criteria pass.
+One BLOCKED plus five genuine PASS runs may satisfy completion count when all hard safety/soundness criteria pass.
 
-- [ ] **Step 4: Implement scoring and report**
+- [ ] **Step 4: Implement scoring and commit**
 
-Soundness denominator is factory PASS claims; completion power denominator is feasible product runs. Never combine the two into one misleading average.
-
-- [ ] **Step 5: Run and commit**
+Soundness denominator = factory PASS claims. Completion power denominator = feasible product runs. Never merge them into one average.
 
 ```bash
 uv run pytest tests/unit/internbench/test_certification.py -q
@@ -379,33 +397,45 @@ git add src/infinite_interns/internbench/certification.py internbench/manifests 
 git commit -m "feat: make zero false pass the certification rule"
 ```
 
-### Task 9: Add champion/challenger metadata and regression promotion guard
+### Task 10: Implement regression ingestion and champion/challenger experiments
 
 **Files:**
-- Create: `src/infinite_interns/internbench/experiments.py`
-- Test: `tests/unit/internbench/test_experiments.py`
+- Create: `src/infinite_interns/evaluation/regressions.py`
+- Create: `src/infinite_interns/evaluation/experiments.py`
+- Create: `tests/unit/evaluation/test_regressions.py`
+- Create: `tests/unit/evaluation/test_experiments.py`
 
 **Interfaces:**
-- `AgentConfigurationRef` includes model, prompt version/hash, context-builder version, tool version, reasoning setting, retry/session policy.
+- `RegressionCase` packages minimal starting repo/spec/failure reproduction/expected fixed evaluator refs from a reproduced real failure.
+- `ExperimentRun` supports repeated runs and hidden holdout labels.
 - `ExperimentComparison` rejects promotion on any critical holdout regression.
+- Self-improvement policy is `propose -> benchmark -> shadow/holdout -> promote`, never live self-edit.
 
-- [ ] **Step 1: Write promotion tests**
+- [ ] **Step 1: Write real-failure ingestion test**
 
-Candidate with +10% overall completion but one new critical security failure must be rejected. Candidate with no critical regressions and higher verified completion under budget may be promoted.
+Given reproduced release defect and its fixed commit, ingestion creates a regression manifest referencing minimal fixture snapshot/reproduction, sanitized evidence, and expected hidden evaluator result. Secret-bearing artifacts are excluded.
 
-- [ ] **Step 2: Implement metadata-only experiment registry**
+- [ ] **Step 2: Write repeated-experiment aggregation test**
 
-This stage does not train a learned router. It records champion/challenger outcomes for future deterministic routing updates.
+Aggregate multiple runs per configuration into success distribution, mean/median cost and duration, verified-requirement rate, defect escapes, and critical failures rather than treating one stochastic run as decisive.
 
-- [ ] **Step 3: Run and commit**
+- [ ] **Step 3: Write promotion tests**
+
+Candidate +10% completion but one new critical security holdout failure => reject. Candidate with no critical regressions and materially improved verified outcomes under policy => eligible.
+
+- [ ] **Step 4: Implement metadata registry only**
+
+No learned router or fine-tuning in v1. Record configuration/results to support future deterministic routing decisions and shadow comparisons.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
-uv run pytest tests/unit/internbench/test_experiments.py -q
-git add src/infinite_interns/internbench/experiments.py tests/unit/internbench/test_experiments.py
-git commit -m "feat: gate agent configuration promotion with holdouts"
+uv run pytest tests/unit/evaluation -q
+git add src/infinite_interns/evaluation tests/unit/evaluation
+git commit -m "feat: learn from regressions without weakening judges"
 ```
 
-### Task 10: Final repository certification and operator documentation
+### Task 11: Final certification and operator documentation
 
 **Files:**
 - Create: `docs/operations/getting-started.md`
@@ -418,19 +448,21 @@ git commit -m "feat: gate agent configuration promotion with holdouts"
 
 **Interfaces:**
 - `interns internbench run --suite meta` runs deterministic/security/chaos subset.
-- `interns internbench certify --manifest internbench/manifests/certification-v1.yaml` produces certification report and exits nonzero unless thresholds pass.
+- `interns internbench certify --manifest internbench/manifests/certification-v1.yaml` returns nonzero unless thresholds pass.
 
-- [ ] **Step 1: Extend CI**
+- [ ] **Step 1: Extend required no-paid-provider CI**
 
-Required PR CI: lint/type/unit/DB/scheduler/executor/provider-contract/verification/security/meta-InternBench fake-backend tests.
+Include lint/type/unit/DB/bootstrap/planning/scheduler/executor/provider-contract/verification/convergence/security/meta-InternBench fake-backend tests.
 
-Paid-provider/product certification is a manually triggered or scheduled workflow with explicit max budget and credentials.
+- [ ] **Step 2: Add budgeted provider certification workflow**
 
-- [ ] **Step 2: Write final operator docs**
+Manual/scheduled workflow requires explicit credentials and hard max budget; records exact agent configuration refs.
 
-Document install, `interns init`, workstation services, provider setup by secret refs, `interns doctor`, dry-run, overnight run, watch/status, pause/resume, reports, artifact layout, security profiles, and certification interpretation.
+- [ ] **Step 3: Write operator docs**
 
-- [ ] **Step 3: Run complete no-paid-provider gate**
+Document install, `interns init`, `interns new`, workstation services, secret refs/provider gateway, doctor, dry-run, overnight run, watch/status/pause/resume, reports, artifacts, security profiles, evaluation metrics, and certification interpretation.
+
+- [ ] **Step 4: Run complete no-paid-provider gate**
 
 ```bash
 uv run ruff check .
@@ -438,10 +470,12 @@ uv run pyright
 uv run pytest tests/unit -q
 uv run pytest tests/integration -q
 uv run pytest tests/chaos -q
-cd bridge/codex && npm test
+cd bridge/codex
+npm test
+cd ../..
 ```
 
-- [ ] **Step 4: Run meta certification**
+- [ ] **Step 5: Run meta certification**
 
 ```bash
 uv run interns internbench run --suite meta
@@ -449,15 +483,15 @@ uv run interns internbench run --suite meta
 
 Expected: zero critical violations.
 
-- [ ] **Step 5: Run provider-enabled certification when credentials are configured**
+- [ ] **Step 6: Run provider-enabled certification before JobBot**
 
 ```bash
 uv run interns internbench certify --manifest internbench/manifests/certification-v1.yaml
 ```
 
-Expected before JobBot: zero false factory PASS results and architecture-defined minimum full releases.
+Expected: zero false factory PASS results and all configured completion/soundness thresholds satisfied.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add README.md AGENTS.md docs/operations .github/workflows/ci.yml tests
@@ -481,4 +515,4 @@ full product release threshold = satisfied
 brownfield hidden regression suite = PASS
 ```
 
-If these conditions are not met, the certification report must name the failing cases and the factory remains not ready for unattended JobBot construction.
+If any condition fails, certification must name the failing cases and InfiniteInterns remains not ready for unattended JobBot construction.
