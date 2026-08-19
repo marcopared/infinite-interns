@@ -1,7 +1,7 @@
+import asyncio
 import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -65,7 +65,7 @@ async def test_fake_worker_commits_only_inside_task_worktree(tmp_path: Path) -> 
             status = await backend.status(handle)
             if status in {ExecutionStatus.SUCCEEDED, ExecutionStatus.FAILED}:
                 break
-            time.sleep(0.25)
+            await asyncio.sleep(0.25)
         assert status is ExecutionStatus.SUCCEEDED
 
         result = json.loads((artifact_dir / "result.json").read_text())
