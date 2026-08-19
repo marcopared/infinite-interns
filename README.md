@@ -269,11 +269,26 @@ The joke stops at the architecture boundary. The engineering documents use preci
 - Approved architecture: [`docs/architecture/infinite-interns-design.md`](docs/architecture/infinite-interns-design.md)
 - Implementation roadmap: [`docs/superpowers/plans/2026-08-18-infinite-interns-implementation-roadmap.md`](docs/superpowers/plans/2026-08-18-infinite-interns-implementation-roadmap.md)
 - Plan self-review and execution order: [`docs/superpowers/plans/2026-08-18-plan-self-review.md`](docs/superpowers/plans/2026-08-18-plan-self-review.md)
+- Stage 1 plan: [`docs/superpowers/plans/2026-08-18-stage-1-deterministic-foundation.md`](docs/superpowers/plans/2026-08-18-stage-1-deterministic-foundation.md)
 
-## Current status
+## Development status
 
-Architecture and implementation planning are complete.
+Stage 1 — the deterministic foundation — is implemented on its feature branch and is undergoing final merge review. It includes the Python package, validated configuration, PostgreSQL control-plane schema, artifact store, evidence authority, environment doctor, status CLI, and Stage 1 acceptance tests.
 
-Implementation has **not** started yet.
+Stage 2 adds durable orchestration, leases/fencing, isolated Docker/worktree execution, serialized integration, and crash recovery.
 
-The interns have completed orientation and are waiting for laptops.
+To verify the current Stage 1 branch locally:
+
+```bash
+uv sync --dev --locked
+docker compose -f docker-compose.dev.yml up -d postgres
+export INFINITE_INTERNS_DATABASE_URL='postgresql+psycopg://interns:interns@127.0.0.1:54329/infinite_interns'
+uv run alembic upgrade head
+uv run ruff check .
+uv run pytest tests/unit -q
+uv run pytest tests/integration -q
+uv run pyright
+uv run interns doctor
+```
+
+The interns now have laptops. Management has already scheduled their performance reviews.
