@@ -4,5 +4,6 @@
 .pyright/
 __pycache__/
 *.py[cod]
+.env
 .infinite-interns/
 .superpowers/
