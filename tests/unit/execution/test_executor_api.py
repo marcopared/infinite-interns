@@ -1,7 +1,8 @@
 import pytest
-from executor.app import create_app
-from executor.memory_backend import InMemoryExecutionBackend
 from httpx import ASGITransport, AsyncClient
+
+from infinite_interns.executor.app import create_app
+from infinite_interns.executor.memory_backend import InMemoryExecutionBackend
 
 
 @pytest.mark.asyncio
