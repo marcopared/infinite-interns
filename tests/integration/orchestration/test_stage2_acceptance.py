@@ -246,7 +246,9 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
                 .values(status=TaskStatus.READY.value)
             )
             await session.commit()
-            lease_c = await LeaseService(session, run_id).claim_ready_task("worker-c", now)
+            lease_c = await LeaseService(session, run_id).claim_ready_task(
+                "worker-c", now + timedelta(seconds=93)
+            )
         assert lease_c is not None and lease_c.task_id == "C"
 
         worktree_c = manager.create(repo, run_id, "C", "c1", integrated_b.last_green_commit)
@@ -294,6 +296,12 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
 
         integrated_files = {path.name for path in checkout.glob("task-output*.txt")}
         assert integrated_files == {"task-output-a1.txt", "task-output-b2.txt", "task-output-c1.txt"}
-        assert request_a.environment_names == request_b1.environment_names == ()
+        assert (
+            request_a.environment_names
+            == request_b1.environment_names
+            == request_b2.environment_names
+            == request_c.environment_names
+            == ()
+        )
     finally:
         await engine.dispose()
