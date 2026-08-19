@@ -1,0 +1,33 @@
+name: ruff-fix-stage2
+
+on:
+  push:
+    branches:
+      - impl/stage-2-orchestration-execution
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: impl/stage-2-orchestration-execution
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --dev --locked
+      - run: uv run ruff check --fix src/infinite_interns/graph/factory.py
+      - name: Commit Ruff result when changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/infinite_interns/graph/factory.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "style: apply pinned Ruff autofix [skip ci]"
+          git push origin HEAD:impl/stage-2-orchestration-execution
