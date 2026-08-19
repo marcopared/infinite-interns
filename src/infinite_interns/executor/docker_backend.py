@@ -66,9 +66,9 @@ class DockerExecutionBackend:
             "--network",
             request.network_profile,
             "--mount",
-            f"type=bind,src={worktree},dst=/workspace,rw",
+            f"type=bind,src={worktree},dst=/workspace",
             "--mount",
-            f"type=bind,src={artifacts},dst=/artifacts,rw",
+            f"type=bind,src={artifacts},dst=/artifacts",
         ]
         for name in request.environment_names:
             argv.extend(("--env", name))
