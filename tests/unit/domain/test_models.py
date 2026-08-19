@@ -1,3 +1,5 @@
+# ruff: noqa: I001
+
 from datetime import UTC, datetime
 
 import pytest
