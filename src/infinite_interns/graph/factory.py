@@ -1,5 +1,9 @@
 """Compiled parent graph exported to the LangGraph Agent Server."""
 
+# LangGraph currently ships this public module without a complete Pyright stub surface.
+# Keep that untyped boundary confined to this adapter; factory services and state remain strict.
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+
 from langgraph.graph import END, START, StateGraph
 
 from infinite_interns.graph.nodes import load_run, schedule, wait_or_finish
