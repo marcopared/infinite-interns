@@ -1,11 +1,15 @@
-from datetime import UTC, datetime
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 from infinite_interns.db.engine import create_engine, create_session_factory
-from infinite_interns.db.repositories import EvidenceRepository, RequirementRepository, RunRepository
+from infinite_interns.db.repositories import (
+    EvidenceRepository,
+    RequirementRepository,
+    RunRepository,
+)
 from infinite_interns.domain.enums import EvidenceResult, RequirementStatus, RiskClass, RunStatus
 from infinite_interns.domain.models import EvidenceRecord, RequirementRecord, RunRecord
 
