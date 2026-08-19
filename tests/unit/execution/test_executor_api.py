@@ -1,5 +1,4 @@
 import pytest
-
 from executor.app import create_app
 from executor.memory_backend import InMemoryExecutionBackend
 from httpx import ASGITransport, AsyncClient
