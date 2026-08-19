@@ -1,6 +1,6 @@
 """Repository boundary between SQLAlchemy rows and immutable domain records."""
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infinite_interns.domain.enums import (
@@ -108,6 +108,26 @@ class TaskRepository:
             status=TaskStatus(row.status),
             risk=RiskClass(row.risk),
         )
+
+    async def set_status_if_epoch(
+        self,
+        run_id: str,
+        task_id: str,
+        expected_epoch: int,
+        status: TaskStatus,
+    ) -> bool:
+        statement = (
+            update(TaskRow)
+            .where(
+                TaskRow.run_id == run_id,
+                TaskRow.task_id == task_id,
+                TaskRow.lease_epoch == expected_epoch,
+            )
+            .values(status=status.value)
+            .returning(TaskRow.task_id)
+        )
+        changed = (await self._session.execute(statement)).scalar_one_or_none()
+        return changed is not None
 
 
 class EvidenceRepository:
