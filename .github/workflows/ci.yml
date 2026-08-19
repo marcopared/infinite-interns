@@ -7,6 +7,22 @@ on:
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: infinite_interns
+          POSTGRES_USER: interns
+          POSTGRES_PASSWORD: interns
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U interns -d infinite_interns"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      INFINITE_INTERNS_DATABASE_URL: postgresql+psycopg://interns:interns@127.0.0.1:5432/infinite_interns
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -15,4 +31,5 @@ jobs:
       - run: uv sync --dev
       - run: uv run ruff check .
       - run: uv run pytest tests/unit -q
+      - run: uv run pytest tests/integration/db -q
       - run: uv run pyright
