@@ -1,5 +1,8 @@
 """FastAPI boundary for isolated task execution."""
 
+# FastAPI registers decorated nested handlers dynamically; Pyright cannot see those uses.
+# pyright: reportUnusedFunction=false
+
 from fastapi import FastAPI, HTTPException, Response
 
 from infinite_interns.execution.base import ExecutionBackend, ExecutionHandle, ExecutionRequest
