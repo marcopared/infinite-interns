@@ -66,3 +66,35 @@ async def test_requirement_and_evidence_round_trip() -> None:
         assert stored_evidence == [evidence]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_requirement_cannot_be_inserted_as_verified() -> None:
+    database_url = os.environ["INFINITE_INTERNS_DATABASE_URL"]
+    engine = create_engine(database_url)
+    sessions = create_session_factory(engine)
+    run_id = f"run_{uuid4().hex}"
+
+    try:
+        async with sessions() as session:
+            await RunRepository(session).add(
+                RunRecord(
+                    run_id=run_id,
+                    repo="fixture",
+                    base_commit="abc123",
+                    status=RunStatus.CREATED,
+                    started_at=datetime.now(UTC),
+                )
+            )
+            with pytest.raises(ValueError, match="UNVERIFIED"):
+                await RequirementRepository(session).add(
+                    RequirementRecord(
+                        requirement_id="REQ-verified",
+                        run_id=run_id,
+                        text="Cannot self-verify",
+                        criticality=RiskClass.CRITICAL,
+                        status=RequirementStatus.VERIFIED,
+                    )
+                )
+    finally:
+        await engine.dispose()
