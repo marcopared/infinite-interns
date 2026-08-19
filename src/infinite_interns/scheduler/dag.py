@@ -1,8 +1,8 @@
 """Pure task dependency graph validation and readiness calculation."""
 
+import heapq
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import heapq
 
 from infinite_interns.domain.enums import TaskStatus
 
