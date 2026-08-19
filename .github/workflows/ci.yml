@@ -40,6 +40,10 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/integration -q
       - run: uv run pyright
+      - name: Validate workstation Compose
+        run: docker compose -f docker-compose.workstation.yml config --quiet
+      - name: Build workstation control plane
+        run: docker compose -f docker-compose.workstation.yml build agent-server executor
       - name: Smoke LangGraph Agent Server
         run: |
           : > .env
