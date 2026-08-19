@@ -55,6 +55,8 @@ class RequirementRepository:
         self._session = session
 
     async def add(self, record: RequirementRecord) -> None:
+        if record.status is not RequirementStatus.UNVERIFIED:
+            raise ValueError("new requirements must be UNVERIFIED")
         self._session.add(
             RequirementRow(
                 run_id=record.run_id,
