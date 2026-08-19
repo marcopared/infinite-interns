@@ -4,9 +4,9 @@
 
 **Goal:** Connect InfiniteInterns to real coding/review models while preserving scoped credentials, typed contracts, fresh reviewer contexts, durable validated memory, reproducible findings, and deterministic routing/escalation authority.
 
-**Architecture:** Python owns provider-neutral agent services. Codex runs through a TypeScript `@openai/codex-sdk` bridge in the task sandbox; the SDK talks to InfiniteInterns ModelGateway using a custom `baseUrl` and a short-lived attempt capability token as its API key. The gateway validates run/task/attempt/lease/provider/model scope and substitutes the real provider credential. Kimi and DeepSeek also route through the gateway. Context is task-specific and commit-aware. Reviewers receive cold context. Model findings become structured hypotheses routed through reproduction; models never decide completion.
+**Architecture:** Python owns provider-neutral agent services. Codex runs through OpenAI's official `openai-codex` Python SDK directly inside the task worker, using `AsyncCodex` and task-scoped resumable threads. Codex model traffic is routed through InfiniteInterns ModelGateway by configuring a custom Codex model provider whose `base_url` points at the gateway and whose `env_key` contains only a short-lived attempt capability token. The gateway validates run/task/attempt/lease/provider/model scope and substitutes the real provider credential. Kimi and DeepSeek also route through the gateway. Context is task-specific and commit-aware. Reviewers receive cold context. Model findings become structured hypotheses routed through reproduction; models never decide completion.
 
-**Tech Stack:** Stages 1-3A plus TypeScript/Node 22, `@openai/codex-sdk`, httpx, Pydantic JSON schemas.
+**Tech Stack:** Stages 1-3A plus Python `openai-codex`, httpx, Pydantic JSON schemas.
 
 **Spec:** `docs/architecture/infinite-interns-design.md`
 
@@ -14,9 +14,10 @@
 
 - Provider responses never directly transition requirement/release/run authority states.
 - Master model-provider credentials never enter a worker container.
+- The executor starts each worker with a minimal explicit environment; the Codex SDK process therefore cannot inherit arbitrary host secrets.
 - Reviewer contexts never include the implementer's reasoning transcript.
 - Agent-to-agent handoff uses Git, typed artifacts, evidence, findings, and validated decisions.
-- Codex may persist one session within one task while making progress; task/reviewer boundaries are fresh contexts.
+- Codex may persist one thread within one task while making progress; task/reviewer boundaries create fresh threads.
 - Kimi/DeepSeek output is advisory until reproduced/dispositioned.
 - Provider outage is infrastructure failure, not code failure.
 - Repeated engineering failure triggers strategy escalation rather than unbounded same-strategy retry.
@@ -50,13 +51,6 @@ src/infinite_interns/
     app.py
     capabilities.py
     providers.py
-bridge/codex/
-  package.json
-  package-lock.json
-  tsconfig.json
-  src/index.ts
-  src/protocol.ts
-  tests/protocol.test.ts
 prompts/
   implementer.md
   reviewer.md
@@ -141,20 +135,20 @@ git add src/infinite_interns/agents tests/unit/agents
 git commit -m "feat: define typed agent backend contracts"
 ```
 
-### Task 2: Implement scoped ModelGateway compatible with Codex SDK
+### Task 2: Implement scoped ModelGateway compatible with Codex
 
 **Files:**
 - Create: `src/infinite_interns/gateway/capabilities.py`
 - Create: `src/infinite_interns/gateway/providers.py`
 - Create: `src/infinite_interns/gateway/app.py`
-- Create: `tests/unit/agents/test_gateway_capabilities.py`
-- Create: `tests/integration/agents/test_gateway.py`
+- Test: `tests/unit/agents/test_gateway_capabilities.py`
+- Test: `tests/integration/agents/test_gateway.py`
 
 **Interfaces:**
 - `GatewayCapability(run_id, task_id, attempt_id, lease_epoch, provider, allowed_models, expires_at)`.
 - `issue_gateway_token(capability, signing_key) -> str`.
-- Gateway exposes an OpenAI-compatible `/v1/responses` route for Codex plus compatible chat/response routes required by reviewer adapters.
-- Gateway validates current lease epoch before forwarding.
+- Gateway exposes an OpenAI-compatible `/v1/responses` surface for Codex plus compatible reviewer routes.
+- Gateway verifies current lease epoch before forwarding.
 
 - [ ] **Step 1: Write token-scope tests**
 
@@ -178,9 +172,9 @@ Canonical JSON payload contains only scoped identifiers/permissions/expiry. Sign
 
 `ProviderRegistry` resolves `secret://providers/openai`, `secret://providers/kimi`, and `secret://providers/deepseek` only inside gateway process, selects upstream base URL/protocol, and injects actual Authorization upstream.
 
-- [ ] **Step 4: Implement transparent OpenAI Responses proxy**
+- [ ] **Step 4: Implement transparent Responses proxy**
 
-For `/v1/responses`, validate capability and requested model, preserve request/stream semantics needed by Codex, forward to configured OpenAI upstream, and return compatible status/body/stream. Do not log request Authorization or provider credentials.
+For `/v1/responses`, validate capability and requested model, preserve request/stream semantics needed by Codex, forward to configured OpenAI upstream, and return a wire-compatible response/stream. Do not log request Authorization or provider credentials.
 
 - [ ] **Step 5: Add redacted usage metadata**
 
@@ -194,65 +188,75 @@ git add src/infinite_interns/gateway tests
 git commit -m "feat: broker scoped model access through gateway"
 ```
 
-### Task 3: Build Codex SDK JSONL bridge through ModelGateway
+### Task 3: Implement Codex backend with official Python SDK
 
 **Files:**
-- Create: `bridge/codex/package.json`
-- Create: `bridge/codex/package-lock.json`
-- Create: `bridge/codex/tsconfig.json`
-- Create: `bridge/codex/src/protocol.ts`
-- Create: `bridge/codex/src/index.ts`
-- Create: `bridge/codex/tests/protocol.test.ts`
+- Modify: `pyproject.toml`
+- Modify: `uv.lock`
 - Create: `src/infinite_interns/agents/codex.py`
-- Test: `tests/integration/agents/test_codex_bridge_fake.py`
+- Test: `tests/unit/agents/test_codex_config.py`
+- Test: `tests/integration/agents/test_codex_backend_fake_gateway.py`
 
 **Interfaces:**
-- JSONL request ops: `ping`, `start`, `run`, `resume`, `close`.
-- Bridge obtains `INFINITE_INTERNS_MODEL_GATEWAY_URL` and `INFINITE_INTERNS_MODEL_TOKEN` from worker environment.
-- SDK client uses `baseUrl=<gateway>/v1` and `apiKey=<scoped token>`.
-- Required Codex environment is explicitly allowlisted; bridge does not inherit host environment wholesale.
+- `CodexBackend` implements `AgentBackend` with `openai_codex.AsyncCodex`.
+- `AgentSession.provider_session_id` stores the Codex thread ID.
+- New task -> `thread_start`; task-local continuation/recovery -> `thread_resume`.
+- Thread sandbox is `Sandbox.workspace_write` for implementers and `Sandbox.read_only` for cold code-review sessions where mutation is not needed.
+- Codex custom provider points to InfiniteInterns ModelGateway using `wire_api="responses"` and `env_key="INFINITE_INTERNS_MODEL_TOKEN"`.
 
-- [ ] **Step 1: Define bridge protocol**
+- [ ] **Step 1: Add official Python SDK**
 
-```ts
-export type BridgeRequest =
-  | { request_id: string; op: "ping" }
-  | { request_id: string; op: "start"; cwd: string; prompt: string }
-  | { request_id: string; op: "run"; session_id: string; prompt: string }
-  | { request_id: string; op: "resume"; session_id: string }
-  | { request_id: string; op: "close"; session_id: string };
+Add `openai-codex` to project dependencies and run `uv lock`. Do not install a separate Node/TypeScript bridge; the SDK pins its matching Codex CLI runtime dependency.
+
+- [ ] **Step 2: Write custom-provider configuration test**
+
+Build `CodexConfig` through a helper and assert the effective override map/config contains a provider equivalent to:
+
+```toml
+model_provider = "infinite_interns_gateway"
+
+[model_providers.infinite_interns_gateway]
+name = "InfiniteInterns Gateway"
+base_url = "http://model-gateway:8080/v1"
+env_key = "INFINITE_INTERNS_MODEL_TOKEN"
+wire_api = "responses"
+requires_openai_auth = false
 ```
 
-Every response is `{request_id, ok, result}` or `{request_id, ok:false, error:{code,message}}`.
+The test also asserts the scoped token is supplied only through the worker's `INFINITE_INTERNS_MODEL_TOKEN` environment variable and is not embedded in persisted config text.
 
-- [ ] **Step 2: Add SDK/tooling and lock dependencies**
+- [ ] **Step 3: Implement secure `CodexConfig` builder**
 
-Use Node 22, install current `@openai/codex-sdk`, TypeScript, and test runner; commit `package-lock.json`.
+The executor already launches the worker container with a minimal environment. Inside that worker, construct `CodexConfig` with the task worktree as `cwd` and config overrides/custom provider settings for the gateway. Do **not** rely on `CodexConfig.env` to remove inherited environment variables; isolation happens at worker process/container creation. Set/override only the scoped gateway token and task-safe variables required by Codex.
 
-- [ ] **Step 3: Configure SDK securely**
+- [ ] **Step 4: Implement thread start/resume/run**
 
-Instantiate Codex with gateway URL and scoped token, and an explicit environment map containing only PATH, HOME/CODEX_HOME inside the worker, locale, model-gateway variables, and workload-required nonsecret variables. SDK thread working directory is the task worktree.
+```python
+from openai_codex import AsyncCodex, Sandbox
 
-- [ ] **Step 4: Implement session lifecycle**
 
-`start` creates a thread and returns ID; `run` executes a turn; `resume` reconstructs thread from persisted ID; `close` drops bridge-local reference. Protocol stdout is JSONL only; diagnostics use stderr.
+async def start_implementer_thread(codex: AsyncCodex, cwd: str, model: str):
+    return await codex.thread_start(
+        cwd=cwd,
+        model=model,
+        model_provider="infinite_interns_gateway",
+        sandbox=Sandbox.workspace_write,
+    )
+```
 
-- [ ] **Step 5: Test with local fake Responses server**
+The production service owns `AsyncCodex` lifecycle, starts a thread for a new attempt/task context, persists `thread.id`, resumes that ID after supervisor recovery when the same task attempt/session remains valid, and normalizes turn output/usage into `AgentResult`.
 
-Verify bridge sends model request to configured gateway base URL, not OpenAI directly; scoped token is sent as auth to fake gateway; fragmented JSONL handling and resume behavior work.
+- [ ] **Step 5: Test against fake local ModelGateway**
 
-- [ ] **Step 6: Implement Python client and commit**
+Run `CodexBackend` with gateway endpoint wired to a deterministic local Responses-compatible fake. Assert request reaches fake gateway rather than public OpenAI endpoint, scoped auth is present, thread ID persists, `thread_resume` restores the session, and model/provider errors map to infrastructure failure.
 
-Use `asyncio.create_subprocess_exec`; pending request map is keyed by request ID; persist thread ID in attempt metadata.
+- [ ] **Step 6: Verify and commit**
 
 ```bash
-cd bridge/codex
-npm ci
-npm test
-cd ../..
-uv run pytest tests/integration/agents/test_codex_bridge_fake.py -q
-git add bridge/codex src/infinite_interns/agents/codex.py tests/integration/agents/test_codex_bridge_fake.py
-git commit -m "feat: run Codex through scoped model gateway"
+uv run pytest tests/unit/agents/test_codex_config.py tests/integration/agents/test_codex_backend_fake_gateway.py -q
+uv run pyright
+git add pyproject.toml uv.lock src/infinite_interns/agents/codex.py tests/unit/agents/test_codex_config.py tests/integration/agents/test_codex_backend_fake_gateway.py
+git commit -m "feat: integrate official Python Codex SDK"
 ```
 
 ### Task 4: Add Kimi and DeepSeek reviewer adapters
@@ -426,7 +430,7 @@ git commit -m "feat: turn review claims into reproducible work"
 
 **Interfaces:**
 - `WorkerService.execute_task(attempt) -> CandidateResult`.
-- Same task-local Codex session handles normal debug/repair while productive.
+- Same task-local Codex thread handles normal debug/repair while productive.
 - Escalation levels:
   - L0 same Codex task-local debugging,
   - L1 fresh Codex diagnosis + repair,
@@ -446,11 +450,11 @@ Fake implementer produces known patch and candidate SHA. QA passes. Fresh fake r
 
 - [ ] **Step 3: Assert reviewer isolation and escalation accounting**
 
-Implementation session ID never appears in reviewer context. Attempt/escalation records persist level, provider/model/prompt refs, cause, cost, and outcome.
+Implementation thread ID never appears in reviewer context. Attempt/escalation records persist level, provider/model/prompt refs, cause, cost, and outcome.
 
 - [ ] **Step 4: Add optional real-provider smoke**
 
-When scoped gateway/provider credentials exist, run one Codex task through gateway and one Kimi/DeepSeek structured review. This job is opt-in and budget-bounded, not required for ordinary CI.
+When scoped gateway/provider credentials exist, run one Codex task through ModelGateway and one Kimi/DeepSeek structured review. This job is opt-in and budget-bounded, not required for ordinary CI.
 
 - [ ] **Step 5: Run Stage 3B gate and commit**
 
@@ -459,10 +463,7 @@ uv run ruff check .
 uv run pyright
 uv run pytest tests/unit/agents tests/unit/context -q
 uv run pytest tests/integration/agents -q
-cd bridge/codex
-npm test
-cd ../..
-git add src tests prompts bridge README.md AGENTS.md
+git add src tests prompts README.md AGENTS.md pyproject.toml uv.lock
 git commit -m "feat: complete scoped multi-model worker pipeline"
 ```
 
@@ -470,13 +471,14 @@ git commit -m "feat: complete scoped multi-model worker pipeline"
 
 Required evidence:
 
-- Codex SDK traffic is routed through scoped gateway instead of master credential in worker,
-- bridge session can resume within task,
+- Codex uses the official Python SDK and task-scoped resumable threads,
+- Codex model traffic is routed through a short-lived scoped ModelGateway token instead of a master provider credential in the worker,
+- executor-provided worker environment is minimal and secret-scoped,
 - provider failures are infrastructure failures,
 - Kimi/DeepSeek structured output is schema validated,
 - context packets are commit-aware/minimal,
 - durable memory requires evidence/accepted decisions,
-- reviewers cannot inherit implementer transcript,
+- reviewers cannot inherit implementer reasoning,
 - false model findings can be rejected by reproduction,
 - confirmed findings create repair work,
 - escalation is bounded and changes strategy,
