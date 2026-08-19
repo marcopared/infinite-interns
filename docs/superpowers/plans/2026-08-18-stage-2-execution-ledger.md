@@ -41,8 +41,22 @@ The Stage 2 branch was created directly from the Stage 1 merge commit. The branc
 
 Ruling: use a dedicated GitHub feature branch as the isolation boundary because this controller cannot create or enter a local git worktree. GitHub Actions remains the executable test environment. Cost if wrong: less local iteration speed, but no weakening of repository isolation or verification authority.
 
-Ruling: dependency versions will use narrow compatible ranges and a committed regenerated `uv.lock`; current package/API facts are checked against primary LangChain/PyPI sources before implementation.
+Ruling: dependency versions use narrow compatible ranges and a committed regenerated `uv.lock`.
+
+Ruling: LangGraph's incomplete Pyright stub surface is isolated to `graph/factory.py` with file-local diagnostics disabled only for missing stubs/unknown member types. Repository-wide strict Pyright remains active.
+
+Ruling: CI runs feature branches on pull requests only and `main` on push, with `cancel-in-progress` per workflow/ref. Superseded runs are not evidence; only the latest complete green run is recorded.
 
 ## Progress
 
-Task 1: starting.
+Task 1 RED: Actions run `32308139332` failed during unit collection because `infinite_interns.graph` did not exist after locked sync and Ruff passed.
+
+Task 1 implementation: added locked LangGraph/FastAPI runtime, compact `FactoryState`, thin graph service/node shell, `langgraph.json`, custom FastAPI health route, and live Agent Server smoke gate.
+
+Task 1 GREEN: Actions run `32309102027` passed locked sync, Ruff, unit tests, Alembic migration, integration tests, Pyright, and `langgraph dev` `/api/health` smoke verification.
+
+Task 1 review: PASS; no Critical or Important findings. Minor: graph service methods remain intentionally non-authoritative placeholders until Task 6.
+
+Task 1: COMPLETE.
+
+Task 2: starting.
