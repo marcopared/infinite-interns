@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from infinite_interns.domain.enums import EvidenceResult, RequirementStatus
 from infinite_interns.domain.models import EvidenceRecord
 
-
 EXPECTED_REQUIREMENT_STATUSES = {
     "unverified",
     "verified",
