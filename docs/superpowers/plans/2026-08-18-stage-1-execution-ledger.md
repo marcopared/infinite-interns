@@ -33,3 +33,11 @@ Task 3: RED verified — Actions run `32209532517` failed because the required `
 Task 3: GREEN verified — Actions run `32209666377`: uv sync PASS, Ruff PASS, all unit tests PASS, Pyright PASS.
 
 Task 3: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-3-review.md`).
+
+Task 4: RED verified — Actions run `32209888928` passed unit gates and failed because `infinite_interns.db` did not exist.
+
+Task 4: implementation discovery — first DB run migrated successfully but exposed FK flush ordering; repository `add()` methods were corrected to flush without committing.
+
+Task 4: GREEN verified — Actions run `32210185676`: uv sync PASS, Ruff PASS, unit tests PASS, Alembic upgrade PASS, PostgreSQL integration PASS, Pyright PASS.
+
+Task 4: complete (review clean; no Critical/Important findings; review record `2026-08-18-stage-1-task-4-review.md`).
