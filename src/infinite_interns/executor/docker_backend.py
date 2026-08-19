@@ -126,6 +126,7 @@ class DockerExecutionBackend:
                 "docker",
                 "ps",
                 "--all",
+                "--no-trunc",
                 "--filter",
                 f"label=ii.operation_key={operation_key}",
                 "--format",
