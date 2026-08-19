@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create the deterministic core of InfiniteInterns: installable package, configuration, durable domain/database models, artifact storage, evidence evaluation, and a minimal operator CLI with no real model calls.
+**Goal:** Create the deterministic core of InfiniteInterns: installable package, validated configuration, durable domain/database models, artifact storage, evidence evaluation, and a minimal operator CLI with no real model calls.
 
-**Architecture:** The stage builds the authority layer before any agents exist. Pydantic models define stable domain contracts, SQLAlchemy/Alembic provide durable state in PostgreSQL schema `ii`, artifacts live outside the database, and the release predicate is a pure deterministic function over validated evidence.
+**Architecture:** The authority layer is built before any agents exist. Pydantic models define stable domain contracts, SQLAlchemy/Alembic provide durable state in PostgreSQL schema `ii`, large artifacts live outside the database, and the release predicate is a pure deterministic function over current provenance-aware evidence.
 
 **Tech Stack:** Python 3.13, uv, Pydantic 2, pydantic-settings, SQLAlchemy 2.x async, psycopg 3, Alembic, Typer, Rich, pytest, pytest-asyncio, Ruff, Pyright, PostgreSQL 16.
 
@@ -12,11 +12,11 @@
 
 ## Global Constraints
 
-- No model or caller can directly write `DONE`; `ReleasePredicate.evaluate()` is the only completion authority.
-- Requirements are the completion unit.
-- Evidence must include run, requirement, commit, environment hash, verifier version, timestamp, producer, and result.
+- No model or ordinary caller can directly write `DONE`.
+- Requirements are the unit of completion.
+- Evidence must include run, requirement, gate, commit, environment hash, verifier version, timestamp, producer, and result.
 - Raw artifact bodies do not live in PostgreSQL.
-- `BLOCKED`, `FAIL`, and `UNSTABLE` must remain distinguishable.
+- `BLOCKED`, `FAIL`, `UNSTABLE`, and `INFRA_ERROR` remain distinct outcomes.
 - Stage 1 has no live LLM/provider dependency.
 
 ---
@@ -34,6 +34,7 @@ src/infinite_interns/
   __init__.py
   cli.py
   config.py
+  doctor.py
   domain/
     __init__.py
     enums.py
@@ -54,7 +55,6 @@ src/infinite_interns/
     models.py
     predicate.py
     service.py
-  doctor.py
 tests/
   unit/
   integration/db/
@@ -73,10 +73,10 @@ docker-compose.dev.yml
 - Create: `docker-compose.dev.yml`
 
 **Interfaces:**
-- Produces CLI entry point name `interns` for later tasks.
-- Produces Python import package `infinite_interns`.
+- Produces CLI entry point `interns`.
+- Produces import package `infinite_interns`.
 
-- [ ] **Step 1: Create the failing package smoke test**
+- [ ] **Step 1: Write the failing package smoke test**
 
 ```python
 # tests/unit/test_package.py
@@ -103,7 +103,7 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "psycopg[binary,pool]>=3.2,<4",
   "rich>=14,<15",
-  "sqlalchemy[asyncio]>=2.0,<3",
+  "sqlalchemy>=2.0,<3",
   "typer>=0.16,<1",
 ]
 
@@ -168,9 +168,7 @@ services:
       retries: 20
 ```
 
-- [ ] **Step 5: Sync and run the smoke test**
-
-Run:
+- [ ] **Step 5: Sync and verify**
 
 ```bash
 uv sync --dev
@@ -181,7 +179,7 @@ uv run pyright
 
 Expected: all commands pass.
 
-- [ ] **Step 6: Add CI**
+- [ ] **Step 6: Add baseline CI**
 
 ```yaml
 # .github/workflows/ci.yml
@@ -211,20 +209,21 @@ git add pyproject.toml .python-version src tests .github docker-compose.dev.yml 
 git commit -m "build: bootstrap InfiniteInterns Python project"
 ```
 
-### Task 2: Define domain IDs, statuses, and immutable contracts
+### Task 2: Define IDs, statuses, and immutable domain contracts
 
 **Files:**
-- Create: `src/infinite_interns/domain/enums.py`
+- Create: `src/infinite_interns/domain/__init__.py`
 - Create: `src/infinite_interns/domain/ids.py`
+- Create: `src/infinite_interns/domain/enums.py`
 - Create: `src/infinite_interns/domain/models.py`
 - Create: `tests/unit/domain/test_models.py`
 
 **Interfaces:**
-- Produces `RunId`, `RequirementId`, `TaskId`, `AttemptId`, `EvidenceId` string aliases.
+- Produces `RunId`, `RequirementId`, `TaskId`, `AttemptId`, `EvidenceId`.
 - Produces `RunStatus`, `RequirementStatus`, `TaskStatus`, `EvidenceResult`, `FailureClass`, `RiskClass`.
-- Produces `RunRecord`, `RequirementRecord`, `TaskRecord`, `EvidenceRecord` Pydantic models.
+- Produces `RunRecord`, `RequirementRecord`, `TaskRecord`, `EvidenceRecord`.
 
-- [ ] **Step 1: Write model-validation tests**
+- [ ] **Step 1: Write domain validation tests**
 
 ```python
 # tests/unit/domain/test_models.py
@@ -239,29 +238,44 @@ from infinite_interns.domain.models import EvidenceRecord
 
 def test_evidence_requires_commit_and_environment_hash() -> None:
     with pytest.raises(ValidationError):
-        EvidenceRecord(
-            evidence_id="ev_1",
-            run_id="run_1",
-            requirement_id="REQ-1",
-            gate_id="ACC-1",
-            result=EvidenceResult.PASS,
-            producer="pytest",
-            verifier_version="1",
-            created_at=datetime.now(UTC),
+        EvidenceRecord.model_validate(
+            {
+                "evidence_id": "ev_1",
+                "run_id": "run_1",
+                "requirement_id": "REQ-1",
+                "gate_id": "ACC-1",
+                "result": EvidenceResult.PASS,
+                "producer": "pytest",
+                "verifier_version": "1",
+                "created_at": datetime.now(UTC),
+            }
         )
 
 
 def test_requirement_status_has_no_done_value() -> None:
-    assert set(RequirementStatus) == {
-        RequirementStatus.UNVERIFIED,
-        RequirementStatus.VERIFIED,
-        RequirementStatus.FAILED,
-        RequirementStatus.BLOCKED,
-        RequirementStatus.UNSTABLE,
+    assert {status.value for status in RequirementStatus} == {
+        "unverified",
+        "verified",
+        "failed",
+        "blocked",
+        "unstable",
     }
 ```
 
-- [ ] **Step 2: Implement enums**
+- [ ] **Step 2: Implement typed IDs**
+
+```python
+# src/infinite_interns/domain/ids.py
+from typing import NewType
+
+RunId = NewType("RunId", str)
+RequirementId = NewType("RequirementId", str)
+TaskId = NewType("TaskId", str)
+AttemptId = NewType("AttemptId", str)
+EvidenceId = NewType("EvidenceId", str)
+```
+
+- [ ] **Step 3: Implement statuses**
 
 ```python
 # src/infinite_interns/domain/enums.py
@@ -275,7 +289,6 @@ class RunStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     UNSTABLE = "unstable"
-    PASS = "pass"
     DONE = "done"
 
 
@@ -326,7 +339,7 @@ class RiskClass(StrEnum):
     CRITICAL = "critical"
 ```
 
-- [ ] **Step 3: Implement typed records with `extra="forbid"`**
+- [ ] **Step 4: Implement immutable records**
 
 ```python
 # src/infinite_interns/domain/models.py
@@ -335,6 +348,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 from .enums import EvidenceResult, RequirementStatus, RiskClass, RunStatus, TaskStatus
+from .ids import EvidenceId, RequirementId, RunId, TaskId
 
 
 class StrictModel(BaseModel):
@@ -342,9 +356,9 @@ class StrictModel(BaseModel):
 
 
 class EvidenceRecord(StrictModel):
-    evidence_id: str
-    run_id: str
-    requirement_id: str
+    evidence_id: EvidenceId
+    run_id: RunId
+    requirement_id: RequirementId
     gate_id: str
     result: EvidenceResult
     commit_sha: str
@@ -356,46 +370,41 @@ class EvidenceRecord(StrictModel):
 
 
 class RequirementRecord(StrictModel):
-    requirement_id: str
-    run_id: str
+    requirement_id: RequirementId
+    run_id: RunId
     text: str
     criticality: RiskClass
     status: RequirementStatus = RequirementStatus.UNVERIFIED
 
 
 class TaskRecord(StrictModel):
-    task_id: str
-    run_id: str
+    task_id: TaskId
+    run_id: RunId
     title: str
     status: TaskStatus
     risk: RiskClass
 
 
 class RunRecord(StrictModel):
-    run_id: str
+    run_id: RunId
     repo: str
     base_commit: str
+    current_commit: str
+    last_green_commit: str
     status: RunStatus
     started_at: datetime
 ```
 
-- [ ] **Step 4: Run tests and typecheck**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/domain/test_models.py -q
 uv run pyright
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add src/infinite_interns/domain tests/unit/domain
 git commit -m "feat: define deterministic domain contracts"
 ```
 
-### Task 3: Add configuration profiles and validation
+### Task 3: Add validated configuration profiles
 
 **Files:**
 - Create: `src/infinite_interns/config.py`
@@ -403,12 +412,14 @@ git commit -m "feat: define deterministic domain contracts"
 
 **Interfaces:**
 - Produces `Settings`, `SchedulerSettings`, `BudgetSettings`, `SecuritySettings`, `ModelSettings`.
-- Produces `load_settings(path: Path | None) -> Settings`.
+- Produces `load_settings(path: Path | None = None) -> Settings`.
 
 - [ ] **Step 1: Write configuration tests**
 
 ```python
 # tests/unit/test_config.py
+import pytest
+
 from infinite_interns.config import Settings
 
 
@@ -418,23 +429,31 @@ def test_overnight_defaults_match_architecture() -> None:
     assert settings.scheduler.heartbeat_seconds == 30
     assert settings.scheduler.max_swe_workers == 4
     assert settings.budget.deadline_hours == 8
-    assert settings.budget.hard_model_usd == 300
+    assert settings.budget.hard_model_usd == 300.0
+    assert settings.security.profile == "overnight"
+    assert settings.models.implementer == "codex"
 
 
 def test_hard_budget_cannot_be_below_soft_budget() -> None:
-    try:
-        Settings(budget={"soft_model_usd": 300, "hard_model_usd": 200})
-    except ValueError:
-        return
-    raise AssertionError("invalid budget accepted")
+    with pytest.raises(ValueError):
+        Settings.model_validate(
+            {"budget": {"soft_model_usd": 300.0, "hard_model_usd": 200.0}}
+        )
 ```
 
-- [ ] **Step 2: Implement Pydantic settings**
-
-Use nested models with defaults from the roadmap and a model validator that requires `hard_model_usd >= soft_model_usd` and `lease_ttl_seconds > heartbeat_seconds * 2`.
+- [ ] **Step 2: Implement the complete settings model**
 
 ```python
+# src/infinite_interns/config.py
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
 class SchedulerSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     lease_ttl_seconds: int = 90
     heartbeat_seconds: int = 30
     max_swe_workers: int = 4
@@ -444,23 +463,57 @@ class SchedulerSettings(BaseModel):
 
 
 class BudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     deadline_hours: int = 8
     soft_model_usd: float = 200.0
     hard_model_usd: float = 300.0
+
+
+class SecuritySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile: Literal["locked", "overnight", "trusted-production"] = "overnight"
+
+
+class ModelSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    implementer: str = "codex"
+    reviewer: str = "codex"
+    adversary: str = "kimi-k3"
+    diagnostician: str = "deepseek-v4-pro"
+
+
+class Settings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scheduler: SchedulerSettings = SchedulerSettings()
+    budget: BudgetSettings = BudgetSettings()
+    security: SecuritySettings = SecuritySettings()
+    models: ModelSettings = ModelSettings()
+
+    @model_validator(mode="after")
+    def validate_relationships(self) -> "Settings":
+        if self.budget.hard_model_usd < self.budget.soft_model_usd:
+            raise ValueError("hard model budget must be >= soft model budget")
+        if self.scheduler.lease_ttl_seconds <= self.scheduler.heartbeat_seconds * 2:
+            raise ValueError("lease TTL must exceed two heartbeat intervals")
+        return self
+
+
+def load_settings(path: Path | None = None) -> Settings:
+    if path is None:
+        return Settings()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return Settings.model_validate(data)
 ```
 
-- [ ] **Step 3: Run tests**
+Add `pyyaml>=6.0,<7` to project dependencies and relock.
+
+- [ ] **Step 3: Verify and commit**
 
 ```bash
+uv lock
 uv run pytest tests/unit/test_config.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src/infinite_interns/config.py tests/unit/test_config.py
+uv run pyright
+git add pyproject.toml uv.lock src/infinite_interns/config.py tests/unit/test_config.py
 git commit -m "feat: add validated factory configuration"
 ```
 
@@ -474,58 +527,127 @@ git commit -m "feat: add validated factory configuration"
 - Create: `src/infinite_interns/db/engine.py`
 - Create: `src/infinite_interns/db/models.py`
 - Create: `src/infinite_interns/db/repositories.py`
-- Test: `tests/integration/db/test_repositories.py`
+- Create: `tests/integration/db/conftest.py`
+- Create: `tests/integration/db/test_repositories.py`
 
 **Interfaces:**
-- Produces `create_engine(database_url) -> AsyncEngine`.
+- Produces `create_async_engine_for(database_url: str) -> AsyncEngine`.
 - Produces `RunRepository`, `RequirementRepository`, `TaskRepository`, `EvidenceRepository`, `EventRepository`.
-- Database schema name is exactly `ii`.
+- Database schema is exactly `ii`.
 
-- [ ] **Step 1: Write an integration test for durable round-trip**
+- [ ] **Step 1: Write a complete durable round-trip test**
 
 ```python
-@pytest.mark.asyncio
-async def test_requirement_and_evidence_round_trip(db_session):
-    reqs = RequirementRepository(db_session)
-    evidence = EvidenceRepository(db_session)
-    await reqs.add(...)
-    await evidence.add(...)
+# tests/integration/db/test_repositories.py
+from datetime import UTC, datetime
+
+from infinite_interns.domain.enums import EvidenceResult, RequirementStatus, RiskClass
+from infinite_interns.domain.ids import EvidenceId, RequirementId, RunId
+from infinite_interns.domain.models import EvidenceRecord, RequirementRecord
+
+
+async def test_requirement_and_evidence_round_trip(db_session) -> None:
+    run_id = RunId("run_1")
+    requirement = RequirementRecord(
+        requirement_id=RequirementId("REQ-1"),
+        run_id=run_id,
+        text="User can save a job",
+        criticality=RiskClass.HIGH,
+        status=RequirementStatus.UNVERIFIED,
+    )
+    record = EvidenceRecord(
+        evidence_id=EvidenceId("ev_1"),
+        run_id=run_id,
+        requirement_id=RequirementId("REQ-1"),
+        gate_id="ACC-SAVE-1",
+        result=EvidenceResult.PASS,
+        commit_sha="abc123",
+        environment_hash="env123",
+        producer="pytest",
+        verifier_version="1",
+        created_at=datetime.now(UTC),
+    )
+
+    await RequirementRepository(db_session).add(requirement)
+    await EvidenceRepository(db_session).add(record)
     await db_session.commit()
-    assert (await reqs.get("REQ-1")).requirement_id == "REQ-1"
-    assert len(await evidence.for_requirement("run_1", "REQ-1")) == 1
+
+    loaded = await RequirementRepository(db_session).get(RequirementId("REQ-1"))
+    evidence = await EvidenceRepository(db_session).for_requirement(run_id, RequirementId("REQ-1"))
+    assert loaded == requirement
+    assert evidence == [record]
 ```
 
-Use factory helpers that construct complete `RequirementRecord`/`EvidenceRecord` values; do not omit provenance fields.
+- [ ] **Step 2: Implement database base/engine**
 
-- [ ] **Step 2: Define SQLAlchemy models**
+```python
+# src/infinite_interns/db/base.py
+from sqlalchemy import MetaData
+from sqlalchemy.orm import DeclarativeBase
 
-At minimum create tables for `runs`, `spec_versions`, `requirements`, `tasks`, `task_dependencies`, `attempts`, `evidence`, `review_findings`, `events`, `deployments`, and `budgets`. Use UUID/ULID-compatible `String(64)` identifiers, timezone-aware timestamps, JSONB for typed metadata, and unique constraints preventing duplicate evidence identity `(run_id, requirement_id, gate_id, commit_sha, environment_hash, verifier_version)`.
+metadata = MetaData(schema="ii")
 
-- [ ] **Step 3: Create Alembic migration and apply it**
+
+class Base(DeclarativeBase):
+    metadata = metadata
+```
+
+```python
+# src/infinite_interns/db/engine.py
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+
+def create_async_engine_for(database_url: str) -> AsyncEngine:
+    return create_async_engine(database_url, pool_pre_ping=True)
+```
+
+- [ ] **Step 3: Define the initial ORM schema**
+
+Create explicit mapped classes for `runs`, `spec_versions`, `requirements`, `tasks`, `task_dependencies`, `attempts`, `evidence`, `review_findings`, `events`, `deployments`, and `budgets`. Use `String(64)` IDs, `DateTime(timezone=True)`, `JSONB` metadata, foreign keys within schema `ii`, and this evidence uniqueness constraint:
+
+```python
+UniqueConstraint(
+    "run_id",
+    "requirement_id",
+    "gate_id",
+    "commit_sha",
+    "environment_hash",
+    "verifier_version",
+    name="uq_evidence_identity",
+)
+```
+
+The `runs` row contains at least `id`, `repo`, `base_commit`, `current_commit`, `last_green_commit`, `status`, `started_at`, `updated_at`. The `requirements` row contains `id`, `run_id`, `text`, `criticality`, `status`. The `tasks` row contains `id`, `run_id`, `title`, `risk`, `status`. The `evidence` row contains every field from `EvidenceRecord` plus JSONB metadata.
+
+- [ ] **Step 4: Create and apply Alembic migration**
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d postgres
 uv run alembic upgrade head
 ```
 
-Expected: schema `ii` and all tables exist.
+Expected: schema `ii` and all declared tables exist.
 
-- [ ] **Step 4: Implement repositories returning domain records rather than ORM instances**
+- [ ] **Step 5: Implement repositories**
 
-Repository methods must explicitly translate SQLAlchemy rows to Pydantic domain models. No graph or CLI code may depend on ORM classes.
+Repository methods accept/return domain records only. At minimum implement:
 
-- [ ] **Step 5: Run integration tests**
+```text
+RunRepository.add/get/update_status/update_commits
+RequirementRepository.add/get/list_for_run/update_status
+TaskRepository.add/get/list_for_run/update_status
+EvidenceRepository.add/for_requirement/list_for_run
+EventRepository.append/list_for_run
+```
+
+Every method explicitly maps ORM rows to Pydantic domain models; graph/CLI code never imports ORM classes.
+
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 INFINITE_INTERNS_DATABASE_URL='postgresql+psycopg://interns:interns@127.0.0.1:54329/infinite_interns' \
   uv run pytest tests/integration/db -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
+uv run pyright
 git add alembic.ini migrations src/infinite_interns/db tests/integration/db
 git commit -m "feat: add durable control-plane database"
 ```
@@ -538,21 +660,27 @@ git commit -m "feat: add durable control-plane database"
 - Create: `tests/unit/artifacts/test_filesystem.py`
 
 **Interfaces:**
-- Produces protocol `ArtifactStore.put(run_id, kind, artifact_id, data) -> str`.
-- Produces `ArtifactStore.get(uri) -> bytes`.
+- `ArtifactStore.put(run_id: str, kind: str, artifact_id: str, data: bytes) -> str`.
+- `ArtifactStore.get(uri: str) -> bytes`.
 - URI format is exactly `artifact://runs/<run_id>/<kind>/<artifact_id>`.
 
 - [ ] **Step 1: Write round-trip and traversal tests**
 
 ```python
-def test_round_trip(tmp_path):
+# tests/unit/artifacts/test_filesystem.py
+import pytest
+
+from infinite_interns.artifacts.filesystem import FilesystemArtifactStore
+
+
+def test_round_trip(tmp_path) -> None:
     store = FilesystemArtifactStore(tmp_path)
     uri = store.put("run_1", "logs", "a1", b"hello")
     assert uri == "artifact://runs/run_1/logs/a1"
     assert store.get(uri) == b"hello"
 
 
-def test_rejects_path_traversal(tmp_path):
+def test_rejects_path_traversal(tmp_path) -> None:
     store = FilesystemArtifactStore(tmp_path)
     with pytest.raises(ValueError):
         store.put("../escape", "logs", "a1", b"x")
@@ -560,24 +688,17 @@ def test_rejects_path_traversal(tmp_path):
 
 - [ ] **Step 2: Implement the protocol and filesystem backend**
 
-Use `pathlib.Path.resolve()` containment checks before every write/read. Store metadata such as SHA-256 and byte size alongside artifact database metadata in the calling service, not in sidecar files.
+Use a `typing.Protocol` whose methods have concrete signatures and implement `FilesystemArtifactStore`. Validate `run_id`, `kind`, and `artifact_id` as single path segments; use `Path.resolve()` containment checks before every read/write. Compute SHA-256 and byte size in the calling evidence service for DB metadata.
 
-- [ ] **Step 3: Run tests**
+- [ ] **Step 3: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/artifacts -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
-
-```bash
 git add src/infinite_interns/artifacts tests/unit/artifacts
 git commit -m "feat: add provenance-safe artifact storage"
 ```
 
-### Task 6: Implement deterministic evidence evaluation and release predicate
+### Task 6: Implement deterministic evidence evaluation
 
 **Files:**
 - Create: `src/infinite_interns/evidence/models.py`
@@ -587,65 +708,75 @@ git commit -m "feat: add provenance-safe artifact storage"
 - Create: `tests/unit/evidence/test_service.py`
 
 **Interfaces:**
-- Produces `GateRequirement(gate_id: str, mandatory: bool, requirement_id: str | None)`.
-- Produces `ReleaseEvaluation(status, failing_gate_ids, stale_evidence_ids)`.
-- Produces `ReleasePredicate.evaluate(policy, evidence, current_commit, environment_hash) -> ReleaseEvaluation`.
-- Produces `EvidenceService.requirement_status(...) -> RequirementStatus`.
+- `GateRequirement(gate_id: str, mandatory: bool, requirement_id: RequirementId | None)`.
+- `ReleaseEvaluation(status: EvidenceResult, failing_gate_ids: tuple[str, ...], stale_evidence_ids: tuple[EvidenceId, ...])`.
+- `ReleasePredicate.evaluate(policy: ReleasePolicy, evidence: Sequence[EvidenceRecord], current_commit: str, environment_hash: str) -> ReleaseEvaluation`.
+- `EvidenceService.requirement_status(requirement_id: RequirementId, gates: Sequence[GateRequirement], evidence: Sequence[EvidenceRecord], current_commit: str, environment_hash: str) -> RequirementStatus`.
 
-- [ ] **Step 1: Write the false-DONE prevention tests first**
+- [ ] **Step 1: Write false-PASS prevention tests first**
 
 ```python
-@pytest.mark.parametrize("bad_result", ["fail", "blocked", "unstable", "infra_error"])
-def test_mandatory_gate_prevents_pass(bad_result):
-    evaluation = evaluate_fixture_with_one_bad_mandatory_gate(bad_result)
-    assert evaluation.status != "pass"
+# tests/unit/evidence/test_predicate.py
+import pytest
+
+from infinite_interns.domain.enums import EvidenceResult
 
 
-def test_stale_commit_prevents_pass():
-    evaluation = evaluate_fixture(evidence_commit="abc", current_commit="def")
-    assert evaluation.status != "pass"
-    assert evaluation.stale_evidence_ids
+@pytest.mark.parametrize(
+    "bad_result",
+    [
+        EvidenceResult.FAIL,
+        EvidenceResult.BLOCKED,
+        EvidenceResult.UNSTABLE,
+        EvidenceResult.INFRA_ERROR,
+    ],
+)
+def test_mandatory_gate_prevents_pass(bad_result: EvidenceResult) -> None:
+    evaluation = release_fixture(one_gate_result=bad_result)
+    assert evaluation.status is not EvidenceResult.PASS
 
 
-def test_only_all_current_mandatory_gates_pass():
-    evaluation = evaluate_fully_green_fixture()
-    assert evaluation.status == "pass"
+def test_stale_commit_prevents_pass() -> None:
+    evaluation = release_fixture(evidence_commit="abc", current_commit="def")
+    assert evaluation.status is not EvidenceResult.PASS
+    assert len(evaluation.stale_evidence_ids) == 1
+
+
+def test_only_all_current_mandatory_gates_pass() -> None:
+    evaluation = release_fixture()
+    assert evaluation.status is EvidenceResult.PASS
 ```
+
+Create a complete local `release_fixture()` helper in the same test module that builds two mandatory `GateRequirement` objects and full `EvidenceRecord` values; no external fixture magic.
 
 - [ ] **Step 2: Implement pure evaluation logic**
 
-The predicate must not write the database. It receives immutable inputs and returns immutable output. Rules:
+The predicate performs no database writes. Apply this precedence:
 
 ```text
-missing mandatory evidence -> FAIL
-mandatory FAIL -> FAIL
-mandatory BLOCKED -> BLOCKED unless another mandatory FAIL exists
-mandatory UNSTABLE -> UNSTABLE unless FAIL/BLOCKED dominates by policy
-INFRA_ERROR -> not PASS
-wrong commit/environment -> stale, not PASS
-all mandatory current PASS -> PASS
+any mandatory FAIL          -> FAIL
+else any mandatory BLOCKED  -> BLOCKED
+else any mandatory UNSTABLE -> UNSTABLE
+else any missing/stale/INFRA_ERROR mandatory gate -> FAIL
+else all mandatory current PASS -> PASS
 ```
 
-- [ ] **Step 3: Implement requirement-level status aggregation**
+Optional gate failures remain visible in the evaluation but cannot by themselves turn a policy that marks them optional into failure.
 
-A requirement is `VERIFIED` only when every mandatory gate mapped to that requirement has current `PASS` evidence. Do not derive `VERIFIED` from task state.
+- [ ] **Step 3: Implement requirement aggregation**
 
-- [ ] **Step 4: Run evidence tests**
+A requirement is `VERIFIED` only when every mandatory gate mapped to that requirement has current `PASS` evidence. Task status is never an input to this method.
+
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/evidence -q
-```
-
-Expected: PASS, including zero false-pass fixtures.
-
-- [ ] **Step 5: Commit**
-
-```bash
+uv run pyright
 git add src/infinite_interns/evidence tests/unit/evidence
 git commit -m "feat: add deterministic evidence authority"
 ```
 
-### Task 7: Add doctor/status CLI and stage acceptance test
+### Task 7: Add doctor/status CLI and Stage 1 acceptance test
 
 **Files:**
 - Create: `src/infinite_interns/doctor.py`
@@ -656,52 +787,96 @@ git commit -m "feat: add deterministic evidence authority"
 - Modify: `README.md`
 
 **Interfaces:**
-- Produces commands `interns doctor` and `interns status --run <id>`.
-- `doctor` checks Python version, Git executable, Docker executable, DB connectivity, artifact root writability.
+- Produces `interns doctor` and `interns status --run <id>`.
+- `doctor` checks Python version, Git executable, Docker executable, DB connectivity, and artifact-root writability.
 
-- [ ] **Step 1: Write a doctor unit test using injected checks**
+- [ ] **Step 1: Write doctor unit test with injected checks**
 
 ```python
-def test_doctor_reports_failed_dependency():
-    report = run_doctor(checks=[lambda: CheckResult("git", False, "missing")])
+# tests/unit/test_doctor.py
+from infinite_interns.doctor import CheckResult, run_doctor
+
+
+def test_doctor_reports_failed_dependency() -> None:
+    report = run_doctor(checks=(lambda: CheckResult("git", False, "missing"),))
     assert report.ready is False
     assert report.results[0].name == "git"
 ```
 
-- [ ] **Step 2: Implement Typer/Rich CLI**
+- [ ] **Step 2: Implement concrete doctor models/service**
 
 ```python
+# src/infinite_interns/doctor.py
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    name: str
+    ok: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class DoctorReport:
+    results: tuple[CheckResult, ...]
+
+    @property
+    def ready(self) -> bool:
+        return all(result.ok for result in self.results)
+
+
+def run_doctor(checks: Sequence[Callable[[], CheckResult]]) -> DoctorReport:
+    return DoctorReport(tuple(check() for check in checks))
+```
+
+Add concrete check functions using `sys.version_info`, `shutil.which("git")`, `shutil.which("docker")`, an async DB probe wrapper, and a temporary write/delete under artifact root.
+
+- [ ] **Step 3: Implement Typer/Rich CLI**
+
+```python
+# src/infinite_interns/cli.py
+from typing import Annotated
+
 import typer
+from rich.console import Console
 
 app = typer.Typer(no_args_is_help=True)
+console = Console()
 
 
 @app.command()
 def doctor() -> None:
-    ...
+    report = build_default_doctor_report()
+    for result in report.results:
+        console.print(f"{result.name}: {'PASS' if result.ok else 'FAIL'} - {result.detail}")
+    if not report.ready:
+        raise typer.Exit(code=1)
 
 
 @app.command()
-def status(run: str = typer.Option(..., "--run")) -> None:
-    ...
+def status(run: Annotated[str, typer.Option("--run")]) -> None:
+    record = load_run_status(run)
+    console.print(f"{record.run_id}: {record.status.value}")
 ```
 
-The command implementation may format data, but readiness/status decisions come from typed services.
+`build_default_doctor_report()` and `load_run_status()` are thin functions in the same module/service wiring layer that construct settings/repositories and delegate to typed services; tests inject fakes rather than patching database internals.
 
-- [ ] **Step 3: Write the Stage 1 acceptance test**
+- [ ] **Step 4: Write the Stage 1 acceptance test**
 
 The integration test must:
 
 1. create a run and two requirements,
-2. persist mandatory gate policy,
-3. add green evidence for all but one gate,
-4. prove release is not `PASS`,
-5. add final current-commit evidence,
-6. prove release becomes `PASS`,
-7. add newer commit identity without new evidence,
-8. prove release becomes non-pass again.
+2. create a release policy with mandatory gates for both,
+3. persist current green evidence for all but one gate,
+4. assert release is not `PASS`,
+5. add the final current-commit evidence,
+6. assert release is `PASS`,
+7. advance `current_commit` without new evidence,
+8. assert the same release is no longer `PASS` because evidence is stale.
 
-- [ ] **Step 4: Run full Stage 1 gate**
+- [ ] **Step 5: Run full Stage 1 gate**
 
 ```bash
 uv run ruff check .
@@ -713,11 +888,9 @@ INFINITE_INTERNS_DATABASE_URL='postgresql+psycopg://interns:interns@127.0.0.1:54
 
 Expected: all PASS.
 
-- [ ] **Step 5: Update repo navigation**
+- [ ] **Step 6: Update repo navigation and commit**
 
-Update `AGENTS.md` so the implementation plan and test commands are discoverable. Update `README.md` status to `Stage 1 implementation ready` and document `uv sync`, PostgreSQL startup, and `interns doctor`.
-
-- [ ] **Step 6: Commit**
+Update `AGENTS.md` to link the roadmap/Stage 1 plan and verification commands. Update `README.md` status to `Stage 1 implementation ready` and document `uv sync`, PostgreSQL startup, and `interns doctor`.
 
 ```bash
 git add src/infinite_interns/cli.py src/infinite_interns/doctor.py tests README.md AGENTS.md
@@ -735,4 +908,4 @@ uv run pytest tests/unit -q
 uv run pytest tests/integration -q
 ```
 
-Manual inspection requirement: search for writes of `RunStatus.DONE`. Stage 1 implementation must contain no such write outside the release-transition service added in a later stage; the predicate may return `PASS`, but nothing yet transitions a run to `DONE`.
+Search production Python code for `RunStatus.DONE`. Stage 1 must contain **zero writes** to `RunStatus.DONE`; at this stage the predicate may return `EvidenceResult.PASS`, but the sole run-completion transition is intentionally added and tested in Stage 4.
