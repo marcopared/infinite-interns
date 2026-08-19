@@ -18,6 +18,15 @@ def test_round_trip(tmp_path: Path) -> None:
     assert store.get(uri) == b"hello"
 
 
+def test_existing_artifact_is_idempotent_but_immutable(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    uri = store.put("run_1", "logs", "a1", b"hello")
+    assert store.put("run_1", "logs", "a1", b"hello") == uri
+    with pytest.raises(FileExistsError):
+        store.put("run_1", "logs", "a1", b"different")
+    assert store.get(uri) == b"hello"
+
+
 @pytest.mark.parametrize(
     ("run_id", "kind", "artifact_id"),
     [
