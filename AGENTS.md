@@ -35,7 +35,29 @@ No agent may directly mark a requirement verified, a release passed, or a run `D
 
 ## Current phase
 
-Architecture and implementation planning are approved/complete. Implementation begins at Stage 1 only after the operator selects the execution workflow.
+Stage 1 deterministic foundation is implemented on `impl/stage-1-deterministic-foundation` and is awaiting merge after final review. Stage 2 durable orchestration/execution is next after Stage 1 lands on `main`.
+
+Stage 1 execution evidence and per-task review records are under `docs/superpowers/plans/2026-08-18-stage-1-*`.
+
+## Stage 1 verification
+
+```bash
+uv sync --dev --locked
+uv run ruff check .
+uv run pytest tests/unit -q
+uv run alembic upgrade head
+uv run pytest tests/integration -q
+uv run pyright
+```
+
+Local PostgreSQL:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d postgres
+export INFINITE_INTERNS_DATABASE_URL='postgresql+psycopg://interns:interns@127.0.0.1:54329/infinite_interns'
+uv run alembic upgrade head
+uv run interns doctor
+```
 
 ## Working rules
 
