@@ -1,5 +1,5 @@
-from infinite_interns import __version__
+import infinite_interns
 
 
 def test_package_has_version() -> None:
-    assert __version__ == "0.1.0"
+    assert getattr(infinite_interns, "__version__", None) == "0.1.0"
