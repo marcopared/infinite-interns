@@ -35,6 +35,7 @@ class RunRepository:
                 started_at=record.started_at,
             )
         )
+        await self._session.flush()
 
     async def get(self, run_id: str) -> RunRecord | None:
         row = await self._session.get(RunRow, run_id)
@@ -63,6 +64,7 @@ class RequirementRepository:
                 status=record.status.value,
             )
         )
+        await self._session.flush()
 
     async def get(self, run_id: str, requirement_id: str) -> RequirementRecord | None:
         row = await self._session.get(RequirementRow, (run_id, requirement_id))
@@ -91,6 +93,7 @@ class TaskRepository:
                 risk=record.risk.value,
             )
         )
+        await self._session.flush()
 
     async def get(self, run_id: str, task_id: str) -> TaskRecord | None:
         row = await self._session.get(TaskRow, (run_id, task_id))
@@ -125,6 +128,7 @@ class EvidenceRepository:
                 created_at=record.created_at,
             )
         )
+        await self._session.flush()
 
     async def for_requirement(self, run_id: str, requirement_id: str) -> list[EvidenceRecord]:
         result = await self._session.execute(
@@ -170,6 +174,7 @@ class EventRepository:
                 occurred_at=record.occurred_at,
             )
         )
+        await self._session.flush()
 
     async def for_run(self, run_id: str) -> list[EventRecord]:
         result = await self._session.execute(
