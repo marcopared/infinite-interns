@@ -21,10 +21,22 @@ async def test_replacement_epoch_rejects_crashed_workers_late_result() -> None:
     try:
         async with sessions() as session:
             await RunRepository(session).add(
-                RunRecord(run_id, "fixture", "abc", RunStatus.RUNNING, now)
+                RunRecord(
+                    run_id=run_id,
+                    repo="fixture",
+                    base_commit="abc",
+                    status=RunStatus.RUNNING,
+                    started_at=now,
+                )
             )
             await TaskRepository(session).add(
-                TaskRecord("TASK-1", run_id, "recover me", TaskStatus.READY, RiskClass.HIGH)
+                TaskRecord(
+                    task_id="TASK-1",
+                    run_id=run_id,
+                    title="recover me",
+                    status=TaskStatus.READY,
+                    risk=RiskClass.HIGH,
+                )
             )
             await session.commit()
 
