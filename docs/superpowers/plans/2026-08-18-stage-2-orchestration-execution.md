@@ -4,20 +4,21 @@
 
 **Goal:** Add durable LangGraph orchestration, deterministic DAG scheduling, leases/fencing, isolated Docker/worktree execution, serialized integration, and crash recovery using fake workers only.
 
-**Architecture:** LangGraph Agent Server hosts the parent factory graph plus custom FastAPI routes. PostgreSQL remains authoritative for tasks/evidence/events. A separate executor daemon owns Docker operations. Workers are disposable and communicate through attempt/result records; the scheduler decides eligibility deterministically.
+**Architecture:** LangGraph Agent Server hosts the parent factory graph and custom FastAPI routes. PostgreSQL remains authoritative for tasks/evidence/events. A separate executor daemon owns Docker lifecycle operations and is the only service with the Docker socket. Workers are disposable and communicate through attempt/result records; the scheduler decides eligibility deterministically.
 
-**Tech Stack:** Stage 1 stack plus LangGraph, LangGraph CLI/Agent Server, FastAPI custom routes, Redis 7, httpx, Git CLI, Docker Engine/Compose.
+**Tech Stack:** Stage 1 stack plus LangGraph Agent Server, FastAPI custom routes, Redis 7, httpx, Git CLI, Docker Engine/Compose.
 
 **Spec:** `docs/architecture/infinite-interns-design.md`
 
 ## Global Constraints
 
-- The scheduler, not an LLM, owns task readiness and leases.
+- The scheduler, not an LLM, owns readiness, claiming, concurrency, and resource conflicts.
 - No task execution holds a SQL transaction for its runtime.
 - Every authoritative task mutation validates the current lease epoch.
-- Worker/container duplication must be safe through idempotency keys.
+- Worker/container creation is idempotent by run/task/attempt/operation key.
 - Integration is single-writer and anchored to `last_green_commit`.
 - Worker loss cannot turn incomplete work into success.
+- No SWE worker receives `/var/run/docker.sock`.
 
 ---
 
@@ -47,56 +48,76 @@ docker/
   worker/Dockerfile
   fake-worker/worker.py
 docker-compose.workstation.yml
+tests/unit/graph/
 tests/unit/scheduler/
+tests/unit/execution/
 tests/integration/orchestration/
 tests/chaos/
 ```
 
-### Task 1: Add LangGraph Agent Server shell and custom API
+### Task 1: Add LangGraph Agent Server shell and compact state
 
 **Files:**
 - Modify: `pyproject.toml`
 - Create: `langgraph.json`
 - Create: `src/infinite_interns/graph/state.py`
 - Create: `src/infinite_interns/graph/factory.py`
+- Create: `src/infinite_interns/graph/nodes.py`
 - Create: `src/infinite_interns/api/app.py`
 - Test: `tests/unit/graph/test_state.py`
 
 **Interfaces:**
-- Produces `FactoryState` with compact IDs/refs only.
-- Produces compiled `graph` export required by `langgraph.json`.
-- Produces custom `/api/runs/{run_id}` health/read route.
+- `FactoryState` stores IDs/refs and small status fields only.
+- Compiled graph export is `src.infinite_interns.graph.factory:graph`.
+- Custom API exposes `/api/health` and later run routes.
 
-- [ ] **Step 1: Add dependencies**
+- [ ] **Step 1: Add Agent Server dependencies**
 
-Add compatible current LangGraph packages and FastAPI to `pyproject.toml`:
+Add current compatible `fastapi`, `httpx`, `langgraph`, and `langgraph-cli[inmem]` dependencies to `pyproject.toml`, then run `uv lock`.
 
-```toml
-"fastapi>=0.116,<1",
-"httpx>=0.28,<1",
-"langgraph>=0.6,<1",
-"langgraph-cli[inmem]>=0.4,<1",
-```
-
-Run `uv lock`.
-
-- [ ] **Step 2: Write state-shape test**
+- [ ] **Step 2: Write compact-state test**
 
 ```python
-def test_factory_state_contains_refs_not_blobs():
-    state = FactoryState(run_id="run_1", current_commit="abc")
+from infinite_interns.graph.state import FactoryState
+
+
+def test_factory_state_contains_refs_not_blobs() -> None:
+    state = FactoryState(run_id="run_1", current_commit="abc", last_green_commit="abc")
     payload = state.model_dump()
     assert "logs" not in payload
     assert "source_code" not in payload
+    assert payload["run_id"] == "run_1"
 ```
 
-- [ ] **Step 3: Implement state model**
+- [ ] **Step 3: Implement `FactoryState`**
 
-Include only run ID, spec version/ref, requirement IDs, ready/running/passed/failed/blocked task IDs, current commit, last green commit, failing gate IDs, convergence iteration, deployment ref, spend, elapsed seconds, and escalation level.
+```python
+from pydantic import BaseModel, ConfigDict, Field
 
-- [ ] **Step 4: Build minimal graph**
 
-Create nodes `load_run -> schedule -> wait_or_finish`. Stage 2 uses a fake task execution adapter; graph nodes call typed services and never contain SQL/Docker logic inline.
+class FactoryState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: str
+    spec_version: str | None = None
+    requirement_ids: list[str] = Field(default_factory=list)
+    ready_task_ids: list[str] = Field(default_factory=list)
+    running_task_ids: list[str] = Field(default_factory=list)
+    passed_task_ids: list[str] = Field(default_factory=list)
+    failed_task_ids: list[str] = Field(default_factory=list)
+    blocked_task_ids: list[str] = Field(default_factory=list)
+    current_commit: str
+    last_green_commit: str
+    failing_gate_ids: list[str] = Field(default_factory=list)
+    convergence_iteration: int = 0
+    deployment_ref: str | None = None
+    spend_usd: float = 0.0
+    elapsed_seconds: int = 0
+    escalation_level: int = 0
+```
+
+- [ ] **Step 4: Build minimal graph shell**
+
+Create async nodes `load_run`, `schedule`, and `wait_or_finish`; each delegates to typed services. Wire `START -> load_run -> schedule -> wait_or_finish -> END` for the initial shell. Stage 2 acceptance expands scheduler behavior without embedding SQL/Docker logic in graph nodes.
 
 - [ ] **Step 5: Configure Agent Server**
 
@@ -113,21 +134,16 @@ Create nodes `load_run -> schedule -> wait_or_finish`. Stage 2 uses a fake task 
 }
 ```
 
-- [ ] **Step 6: Verify local server**
+- [ ] **Step 6: Verify local server and commit**
 
 ```bash
 uv run langgraph dev --no-browser
-curl -f http://127.0.0.1:2024/ok
-```
-
-Expected: `{"ok":true}` from Agent Server.
-
-- [ ] **Step 7: Commit**
-
-```bash
+curl -f http://127.0.0.1:2024/api/health
 git add pyproject.toml uv.lock langgraph.json src/infinite_interns/graph src/infinite_interns/api tests/unit/graph
 git commit -m "feat: add durable LangGraph factory shell"
 ```
+
+Expected health body: `{"status":"ok"}`.
 
 ### Task 2: Implement task DAG validation and readiness
 
@@ -136,38 +152,41 @@ git commit -m "feat: add durable LangGraph factory shell"
 - Create: `tests/unit/scheduler/test_dag.py`
 
 **Interfaces:**
-- Produces `TaskDag(nodes, edges)`.
-- Produces `validate_acyclic() -> None` raising `DagCycleError`.
-- Produces `ready_tasks(status_by_task) -> tuple[str, ...]`.
+- `TaskDag.from_edges(edges: Sequence[tuple[str, str]]) -> TaskDag`.
+- `TaskDag.validate_acyclic() -> None`, raising `DagCycleError`.
+- `TaskDag.ready_tasks(status_by_task: Mapping[str, TaskStatus]) -> tuple[str, ...]`.
 
 - [ ] **Step 1: Write cycle/readiness tests**
 
 ```python
-def test_cycle_is_rejected():
-    dag = TaskDag.from_edges([("A", "B"), ("B", "C"), ("C", "A")])
+import pytest
+
+from infinite_interns.domain.enums import TaskStatus
+from infinite_interns.scheduler.dag import DagCycleError, TaskDag
+
+
+def test_cycle_is_rejected() -> None:
+    dag = TaskDag.from_edges((("A", "B"), ("B", "C"), ("C", "A")))
     with pytest.raises(DagCycleError):
         dag.validate_acyclic()
 
 
-def test_only_dependency_complete_tasks_are_ready():
-    dag = TaskDag.from_edges([("A", "C"), ("B", "C")])
-    assert dag.ready_tasks({"A": "done", "B": "running", "C": "planned"}) == ()
-    assert dag.ready_tasks({"A": "done", "B": "done", "C": "planned"}) == ("C",)
+def test_only_dependency_complete_task_is_ready() -> None:
+    dag = TaskDag.from_edges((("A", "C"), ("B", "C")))
+    blocked = {"A": TaskStatus.DONE, "B": TaskStatus.RUNNING, "C": TaskStatus.PLANNED}
+    ready = {"A": TaskStatus.DONE, "B": TaskStatus.DONE, "C": TaskStatus.PLANNED}
+    assert dag.ready_tasks(blocked) == ()
+    assert dag.ready_tasks(ready) == ("C",)
 ```
 
-- [ ] **Step 2: Implement DAG with Kahn topological validation**
+- [ ] **Step 2: Implement Kahn topological validation**
 
-Keep it dependency-free. Deterministically sort task IDs before returning ready work.
+Use deterministic lexical task-ID ordering for equal-priority nodes. `ready_tasks` treats only `DONE`/`VERIFIED` upstream dependencies as satisfied and never changes database state.
 
-- [ ] **Step 3: Run tests**
+- [ ] **Step 3: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/scheduler/test_dag.py -q
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
 git add src/infinite_interns/scheduler/dag.py tests/unit/scheduler/test_dag.py
 git commit -m "feat: add deterministic task DAG"
 ```
@@ -182,37 +201,32 @@ git commit -m "feat: add deterministic task DAG"
 - Test: `tests/integration/orchestration/test_leases.py`
 
 **Interfaces:**
-- Produces `TaskLease(task_id, owner, epoch, expires_at)`.
-- Produces `claim_ready_task(worker_id, now) -> TaskLease | None` using `FOR UPDATE SKIP LOCKED`.
-- Produces `renew(task_id, owner, epoch, now) -> TaskLease`.
-- Produces `assert_epoch(task_id, epoch) -> None`.
+- `TaskLease(task_id: str, owner: str, epoch: int, expires_at: datetime)`.
+- `LeaseService.claim_ready_task(worker_id: str, now: datetime) -> TaskLease | None`.
+- `LeaseService.renew(task_id: str, owner: str, epoch: int, now: datetime) -> TaskLease`.
+- `LeaseService.assert_epoch(task_id: str, epoch: int) -> None`.
 
-- [ ] **Step 1: Write concurrent-claim test**
+- [ ] **Step 1: Write concurrent claim test**
 
-Start two async claims against one READY task and assert exactly one returns a lease.
+Create one READY task, execute two claim coroutines concurrently with different worker IDs, and assert exactly one returns a lease while the other returns `None`.
 
 - [ ] **Step 2: Write zombie-write test**
 
-Claim epoch 1, expire/reclaim to epoch 2, then attempt an authoritative update with epoch 1. Expected: `StaleLeaseError`.
+Claim epoch 1; expire it; reclaim same task as epoch 2; call an authoritative mutation guarded by epoch 1. Expected: `StaleLeaseError` and no row change.
 
-- [ ] **Step 3: Add lease columns/migration**
+- [ ] **Step 3: Add lease migration**
 
-`lease_epoch` starts at `0` and increments atomically each successful new claim. Renewals keep the same epoch.
+Add nullable `lease_owner`, non-null `lease_epoch` default `0`, and nullable timezone-aware `lease_expires_at` to `ii.tasks`.
 
-- [ ] **Step 4: Implement claim SQL**
+- [ ] **Step 4: Implement atomic claim with `FOR UPDATE SKIP LOCKED`**
 
-Use a single transaction around select/update only. Never leave the transaction open while work executes.
+Inside one short transaction: select the highest-priority READY task whose lease is absent/expired, lock it with `SKIP LOCKED`, increment epoch, set owner/expiry, commit, then return `TaskLease`. Renewals keep the same epoch and require matching owner/epoch.
 
-- [ ] **Step 5: Run integration test**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run alembic upgrade head
 uv run pytest tests/integration/orchestration/test_leases.py -q
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
 git add migrations src/infinite_interns/db src/infinite_interns/scheduler tests/integration/orchestration/test_leases.py
 git commit -m "feat: add leased task ownership with fencing"
 ```
@@ -222,48 +236,54 @@ git commit -m "feat: add leased task ownership with fencing"
 **Files:**
 - Create: `src/infinite_interns/execution/base.py`
 - Create: `src/infinite_interns/execution/worktrees.py`
+- Create: `src/infinite_interns/execution/client.py`
 - Create: `executor/schemas.py`
 - Create: `executor/app.py`
 - Create: `tests/unit/execution/test_worktrees.py`
 - Create: `tests/unit/execution/test_idempotency.py`
 
 **Interfaces:**
-- `ExecutionBackend.create(attempt) -> ExecutionHandle`.
-- `ExecutionBackend.status(handle) -> ExecutionStatus`.
-- `ExecutionBackend.terminate(handle) -> None`.
-- `WorktreeManager.create(repo, run_id, task_id, attempt_id, base_commit) -> WorktreeHandle`.
-- Executor requests require `operation_key = run_id:task_id:attempt_id:operation`.
+- `ExecutionBackend.create(request: ExecutionRequest) -> ExecutionHandle`.
+- `ExecutionBackend.status(handle: ExecutionHandle) -> ExecutionStatus`.
+- `ExecutionBackend.terminate(handle: ExecutionHandle) -> None`.
+- `WorktreeManager.create(repo: Path, run_id: str, task_id: str, attempt_id: str, base_commit: str) -> WorktreeHandle`.
+- `operation_key = "<run_id>:<task_id>:<attempt_id>:<operation>"`.
 
-- [ ] **Step 1: Write deterministic branch/path tests**
+- [ ] **Step 1: Write worktree branch/path tests**
 
-Expected task branch:
+Expected branch is `factory/<run_id>/<task_id>/<attempt_id>`. Expected directory is `<factory-root>/worktrees/<run_id>/<task_id>/<attempt_id>`. Reject identifiers containing `/`, `..`, NUL, or platform path separators before invoking Git.
 
-```text
-factory/<run_id>/<task_id>/<attempt_id>
+- [ ] **Step 2: Implement concrete Git commands with argv**
+
+```python
+subprocess.run(
+    ["git", "-C", str(repo), "worktree", "add", "-b", branch, str(path), base_commit],
+    check=True,
+    text=True,
+    capture_output=True,
+)
 ```
 
-Expected worktree path under configured factory root; reject paths that escape it.
-
-- [ ] **Step 2: Implement Git worktree operations via explicit argv**
-
-Use `subprocess.run([...], check=True)` with no shell string interpolation. Record base commit and created branch.
+Removal uses `git -C <repo> worktree remove --force <path>` only after artifacts/candidate refs are persisted.
 
 - [ ] **Step 3: Write executor idempotency test**
 
-Calling `POST /executions` twice with the same operation key returns the same execution ID and does not create two containers.
+POST the exact same `ExecutionRequest` twice. Assert both responses contain the same execution ID and backend create count remains one.
 
-- [ ] **Step 4: Implement FastAPI executor contract with an in-memory fake backend first**
+- [ ] **Step 4: Implement FastAPI executor with in-memory backend first**
 
 Routes:
 
 ```text
 POST /executions
-GET /executions/{id}
-POST /executions/{id}/terminate
-POST /executions/{id}/heartbeat
+GET /executions/{execution_id}
+POST /executions/{execution_id}/terminate
+POST /executions/{execution_id}/heartbeat
 ```
 
-- [ ] **Step 5: Run tests and commit**
+`ExecutionRequest` includes operation key, run/task/attempt IDs, lease epoch, worktree path, image, argv, artifact path, environment names (not secret values), CPU/memory limits, and network profile.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/execution -q
@@ -282,27 +302,27 @@ git commit -m "feat: add isolated execution contract"
 - Test: `tests/integration/orchestration/test_docker_execution.py`
 
 **Interfaces:**
-- Docker backend mounts exactly one task worktree and one artifact directory.
-- Worker receives no Docker socket.
-- Fake worker protocol writes `result.json` containing `attempt_id`, `lease_epoch`, `status`, and optional `candidate_commit`.
+- Docker backend mounts exactly one task worktree RW and one artifact directory RW.
+- Worker receives no Docker socket and no integration checkout.
+- Fake worker writes `result.json` with `attempt_id`, `lease_epoch`, `status`, and `candidate_commit` when successful.
 
-- [ ] **Step 1: Build a fake worker that creates a file and commit**
+- [ ] **Step 1: Implement deterministic fake worker**
 
-The worker accepts JSON input, writes `task-output.txt`, commits it, and emits structured result JSON.
+Worker parses an input JSON file, writes `task-output.txt`, runs `git add task-output.txt`, commits with a deterministic message, resolves `git rev-parse HEAD`, and writes the result envelope atomically to the artifact directory.
 
-- [ ] **Step 2: Implement Docker backend with argv-based Docker CLI calls**
+- [ ] **Step 2: Implement Docker backend**
 
-For v1 executor daemon, Docker ownership lives only here. Use labels for `ii.run_id`, `ii.task_id`, `ii.attempt_id`, and `ii.operation_key` so existing containers can be discovered after daemon restart.
+Use `docker run` argv from the executor daemon. Apply labels `ii.run_id`, `ii.task_id`, `ii.attempt_id`, `ii.operation_key`; set a non-root UID/GID; mount only approved task paths; apply CPU/memory limits; attach only configured network. On executor restart, query containers by `ii.operation_key` before creating a new one.
 
-- [ ] **Step 3: Add workstation Compose services**
+- [ ] **Step 3: Add workstation Compose**
 
-Include Postgres 16, Redis 7, executor daemon, and Agent Server image. Mount the Docker socket only into executor daemon.
+Services: PostgreSQL 16, Redis 7, Agent Server, executor daemon. Mount Docker socket only into executor daemon. Agent Server reaches executor over a private service network.
 
 - [ ] **Step 4: Write integration test**
 
-Create fixture Git repo, worktree, launch fake worker, wait for completion, assert candidate commit exists and host integration checkout is unchanged.
+Create a fixture Git repository and worktree, launch fake worker, wait for result, assert candidate commit exists and contains `task-output.txt`, and assert host integration checkout remains unchanged.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 docker compose -f docker-compose.workstation.yml build
@@ -321,27 +341,27 @@ git commit -m "feat: execute tasks in isolated Docker workers"
 - Test: `tests/chaos/test_worker_loss.py`
 
 **Interfaces:**
-- `Scheduler.tick(run_id, now) -> SchedulerDecision`.
-- `RecoveryService.expire_stale_leases(now) -> list[RecoveryAction]`.
+- `Scheduler.tick(run_id: str, now: datetime) -> SchedulerDecision`.
+- `RecoveryService.expire_stale_leases(now: datetime) -> list[RecoveryAction]`.
 - `ProgressSnapshot(last_heartbeat, last_agent_event, last_semantic_progress)`.
 
 - [ ] **Step 1: Write capacity/readiness tests**
 
-Assert the scheduler never exceeds 4 SWE slots, never schedules an unmet dependency, and never schedules a globally conflicting task while its lock is held.
+Assert scheduler never exceeds configured SWE slots, never claims unmet dependencies, and never claims a task whose declared exclusive resource lock conflicts with a running task.
 
-- [ ] **Step 2: Implement scheduler priority**
+- [ ] **Step 2: Implement deterministic priority**
 
-Order by critical-path flag, blocking count, criticality, age, then stable task ID. Keep coefficients/config in settings.
+Sort by critical-path flag descending, blocks-count descending, risk descending, waiting age descending, then stable task ID. Read limits/weights from `Settings`; do not call a model.
 
-- [ ] **Step 3: Implement heartbeat expiry**
+- [ ] **Step 3: Implement heartbeat/stall decisions**
 
-At >90 seconds without heartbeat, expire lease, preserve attempt record, and make task eligible for a new attempt according to failure policy.
+At >90 seconds without worker heartbeat, expire lease and create recovery action. A live worker with no agent event for 10 minutes gets a probe; no semantic progress for 20 minutes produces `STALLED` and routes to escalation rather than blind same-strategy retry.
 
-- [ ] **Step 4: Write chaos test**
+- [ ] **Step 4: Write worker-loss chaos test**
 
-Launch fake worker, kill it before result, advance/wait beyond TTL, assert replacement gets a higher epoch and old result is rejected.
+Launch fake worker, terminate it before result, wait/advance past TTL, assert replacement attempt has higher epoch, then submit stale old result and assert rejection.
 
-- [ ] **Step 5: Run and commit**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/scheduler tests/chaos/test_worker_loss.py -q
@@ -356,26 +376,26 @@ git commit -m "feat: add scheduling and crash recovery"
 - Create: `tests/integration/orchestration/test_integration.py`
 
 **Interfaces:**
-- `IntegrationService.integrate(run_id, candidate_commit, expected_last_green) -> IntegrationResult`.
-- One integration lease per run.
-- On success update `last_green_commit`; on regression restore it.
+- `IntegrationService.integrate(run_id: str, candidate_commit: str, expected_last_green: str) -> IntegrationResult`.
+- One integration lease/advisory lock per run.
+- Regression success updates `current_commit` and `last_green_commit`; regression failure restores integration checkout and preserves the prior last-green SHA.
 
 - [ ] **Step 1: Write green and regression fixtures**
 
-Fixture A candidate adds a harmless file and passes test command. Fixture B changes test expectation and fails regression.
+Candidate A adds a harmless file and leaves fixture regression command green. Candidate B changes expected behavior so regression command exits nonzero.
 
-- [ ] **Step 2: Implement serialized integration**
+- [ ] **Step 2: Implement integration lock and regression gate**
 
-Use a DB-backed integration lock/advisory lock. Verify expected last-green before merging. Run configured deterministic regression command after merge.
+Acquire a DB advisory/application lock for run integration, re-read expected last-green, rebase/cherry-pick candidate into integration worktree, run configured regression argv, and only then persist new `last_green_commit`. On failure reset integration worktree to old SHA and emit `INTEGRATION_REJECTED`.
 
-- [ ] **Step 3: Assert failed candidate does not move last green**
+- [ ] **Step 3: Assert rejected candidate cannot move green anchor**
 
 ```python
-assert result.status == IntegrationStatus.REJECTED
-assert await runs.last_green(run_id) == old_green
+assert result.status is IntegrationStatus.REJECTED
+assert await run_repository.last_green(run_id) == old_green
 ```
 
-- [ ] **Step 4: Run and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/integration/orchestration/test_integration.py -q
@@ -383,7 +403,7 @@ git add src/infinite_interns/integration tests/integration/orchestration/test_in
 git commit -m "feat: serialize integration around last green"
 ```
 
-### Task 8: Stage 2 end-to-end fake factory run
+### Task 8: Run Stage 2 end-to-end fake factory acceptance
 
 **Files:**
 - Create: `tests/integration/orchestration/test_stage2_acceptance.py`
@@ -391,42 +411,33 @@ git commit -m "feat: serialize integration around last green"
 - Modify: `AGENTS.md`
 
 **Interfaces:**
-- Uses all Stage 2 services with fake worker backend; no provider credentials.
+- Uses Stage 2 services with fake worker backend only; no provider credentials.
 
-- [ ] **Step 1: Build fixture DAG**
+- [ ] **Step 1: Create fixture DAG**
 
 ```text
-A ─┐
-   ├─> C
-B ─┘
+A --\
+     > C
+B --/
 ```
 
-A and B must run concurrently. C starts only after both integrate.
+A and B must become claimed/running without waiting for each other. C remains blocked until both A and B are integrated and DONE.
 
-- [ ] **Step 2: Inject one worker crash**
+- [ ] **Step 2: Inject worker crash and stale result**
 
-Kill B attempt 1. Verify B attempt 2 receives higher lease epoch and succeeds.
+Terminate B attempt 1 before completion. After lease expiry, B attempt 2 claims a higher epoch and succeeds. Submit attempt 1 result afterward; assert rejection and `STALE_WORKER_WRITE_REJECTED` event.
 
-- [ ] **Step 3: Inject one stale zombie result**
+- [ ] **Step 3: Assert final state**
 
-Submit B attempt 1 result after attempt 2 owns the task. Expected: rejected and event recorded.
+A, B2, and C changes are present in the integration branch, regression command passes, all tasks are DONE, and `current_commit == last_green_commit`.
 
-- [ ] **Step 4: Assert final Git state**
-
-A, B2, and C changes exist in the integration branch, all fixture regressions pass, and `last_green_commit == current_commit`.
-
-- [ ] **Step 5: Run full stage gate**
+- [ ] **Step 4: Run full Stage 2 gate and commit docs**
 
 ```bash
 uv run ruff check .
 uv run pyright
 uv run pytest tests/unit -q
 uv run pytest tests/integration/orchestration tests/chaos -q
-```
-
-- [ ] **Step 6: Update docs and commit**
-
-```bash
 git add tests README.md AGENTS.md
 git commit -m "test: certify durable fake-worker orchestration"
 ```
@@ -435,10 +446,10 @@ git commit -m "test: certify durable fake-worker orchestration"
 
 Required evidence:
 
-- concurrent dependency-safe scheduling works,
-- one worker crash is recovered,
-- stale epoch writes are rejected,
-- duplicate create operations are idempotent,
+- dependency-safe tasks execute concurrently,
+- one killed worker is recovered,
+- stale lease-epoch writes are rejected,
+- repeated create requests are idempotent,
 - integration is serialized,
 - regression failure leaves `last_green_commit` unchanged,
-- no worker container has the Docker socket.
+- no worker container has Docker socket access.
