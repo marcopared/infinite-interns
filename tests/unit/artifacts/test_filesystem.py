@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-import infinite_interns.artifacts.filesystem as filesystem
+from infinite_interns.artifacts import filesystem
 
 
 def _store(tmp_path: Path):
