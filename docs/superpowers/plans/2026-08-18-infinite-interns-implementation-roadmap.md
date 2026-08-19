@@ -6,7 +6,7 @@
 
 **Architecture:** Implementation is split into seven independently testable increments: deterministic authority, durable orchestration/execution, repository bootstrap, specification/planning, agent/context/review, verification/convergence/security/release, and operator/InternBench. LangGraph Agent Server provides durable orchestration, PostgreSQL stores application state, isolated Docker workers execute code, Codex is the primary SWE backend, Kimi/DeepSeek provide independent review, and deterministic evidence code owns `VERIFIED`, release `PASS`, and the only `DONE` transition.
 
-**Tech Stack:** Python 3.13, uv, LangGraph Agent Server, FastAPI custom routes, PostgreSQL 16, Redis 7, SQLAlchemy 2.x, Alembic, psycopg 3, Pydantic 2, Typer, Rich, pytest, Playwright, Docker/Compose, TypeScript `@openai/codex-sdk` bridge, OpenAI-compatible Kimi/DeepSeek adapters.
+**Tech Stack:** Python 3.13, uv, LangGraph Agent Server, FastAPI custom routes, PostgreSQL 16, Redis 7, SQLAlchemy 2.x, Alembic, psycopg 3, Pydantic 2, Typer, Rich, pytest, Playwright, Docker/Compose, OpenAI `openai-codex` Python SDK, OpenAI-compatible Kimi/DeepSeek adapters.
 
 **Spec:** `docs/architecture/infinite-interns-design.md`
 
@@ -62,12 +62,14 @@ src/infinite_interns/
   db/
   domain/
   evidence/
+  evaluation/
   execution/
   gateway/
   graph/
   integration/
   internbench/
   oracles/
+  operator/
   planning/
   release/
   review/
@@ -125,16 +127,22 @@ PostgreSQL stores artifact metadata/URI, not large bodies.
 
 ### Model backends and gateway
 
-Primary SWE backend: Codex through the official TypeScript `@openai/codex-sdk` in `bridge/codex/`.
+Primary SWE backend: Codex through OpenAI's official Python `openai-codex` SDK using `AsyncCodex`, task-scoped threads, and `thread_resume` for same-task recovery.
 
-The bridge is configured with:
+The executor launches the worker with a minimal environment. Codex is configured with a custom model provider equivalent to:
 
-```text
-baseUrl = InfiniteInterns ModelGateway OpenAI-compatible /v1 endpoint
-apiKey  = short-lived attempt capability token
+```toml
+model_provider = "infinite_interns_gateway"
+
+[model_providers.infinite_interns_gateway]
+name = "InfiniteInterns Gateway"
+base_url = "http://model-gateway:8080/v1"
+env_key = "INFINITE_INTERNS_MODEL_TOKEN"
+wire_api = "responses"
+requires_openai_auth = false
 ```
 
-The worker therefore does not receive the master OpenAI credential. The gateway validates the token's run/task/attempt/lease epoch/provider/model scope, then forwards the request with the real provider credential. The gateway must support the OpenAI Responses API surface used by Codex, not only Chat Completions.
+The environment variable contains a short-lived attempt capability token, not a master OpenAI key. The ModelGateway validates run/task/attempt/lease/provider/model scope, then forwards the Responses request with the real provider credential.
 
 Independent reviewers also use the gateway:
 
@@ -162,7 +170,7 @@ Secret values resolve only in privileged services and never enter events, eviden
 
 Workstation v1 uses Docker + Git worktrees. Each task receives one worktree, branch, isolated test DB, browser profile, artifact namespace, port range, and lease epoch.
 
-Workers run non-root, do not mount the host Docker socket or integration checkout, attach to an internal Docker network, and use an allowlist proxy for approved outbound traffic.
+Workers run non-root, start with a minimal explicit environment, do not mount the host Docker socket or integration checkout, attach to an internal Docker network, and use an allowlist proxy for approved outbound traffic.
 
 ### Scheduler defaults
 
@@ -258,23 +266,23 @@ Gate: parent graph cannot enter specification without a durable baseline ref; br
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-3a-specification-planning.md`
 
-Deliverable: immutable product input/spec versions, assumptions policy, Spec Compiler, independent Test Architect oracle draft, Architect artifact, Task Planner, traceability graph, cross-artifact audit, and planning-readiness gate.
+Deliverable: immutable product input/spec versions, assumptions policy, Spec Compiler, independent spec critics/synthesis loop, Test Architect oracle draft, Architect artifact, Task Planner, traceability graph, cross-artifact audit, and planning-readiness gate.
 
-Gate: no implementation task becomes READY until required requirements have acceptance coverage, architecture mapping, justified task coverage, an acyclic DAG, and a clean cross-artifact audit.
+Gate: no implementation task becomes READY until the current spec is review-accepted and required requirements have acceptance coverage, architecture mapping, justified task coverage, an acyclic DAG, and a clean cross-artifact audit.
 
 ### Stage 3B — Agent, context, and review pipeline
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-3-agent-context-review.md`
 
-Deliverable: `AgentBackend`, scoped ModelGateway, Codex SDK bridge, Kimi/DeepSeek adapters, commit-aware context packets, validated durable memory, fresh-review contexts, typed findings, reproduction routing, bounded escalation ladder, and deterministic review tiers.
+Deliverable: `AgentBackend`, scoped ModelGateway, official Python Codex SDK adapter, Kimi/DeepSeek adapters, commit-aware context packets, validated durable memory, fresh-review contexts, typed findings, reproduction routing, bounded escalation ladder, and deterministic review tiers.
 
-Gate: seeded defect is repaired, reviewer context is cold, false-positive finding is rejected by reproduction, confirmed finding becomes repair work, and workers never receive master provider credentials.
+Gate: seeded defect is repaired, reviewer context is cold, false-positive finding is rejected by reproduction, confirmed finding becomes repair work, Codex thread resumes within a task, and workers never receive master provider credentials.
 
 ### Stage 4 — Verification, convergence, security, and release
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-4-verification-security-release.md`
 
-Deliverable: protected oracles, evidence invalidation, E0-E5 verification, mutation/browser failure packages, stability/flaky classification, application-security gates, factory security policy, convergence gap loop, clean-room preview deployment, deployed E2E, and the sole deterministic `DONE` transition.
+Deliverable: protected oracles and amendment flow, evidence invalidation, E0-E5 verification, mutation/browser failure packages, stability/flaky classification, application-security gates, factory security policy, convergence gap loop, clean-room preview deployment, deployed E2E, and the sole deterministic `DONE` transition.
 
 Gate: release is denied independently by stale evidence, failed/unstable critical journeys, open reproduced convergence gaps, security failures, clean-bootstrap failure, or deployed-E2E failure; exactly one valid completion path exists.
 
@@ -282,7 +290,7 @@ Gate: release is denied independently by stale evidence, failed/unstable critica
 
 Plan: `docs/superpowers/plans/2026-08-18-stage-5-operator-internbench.md`
 
-Deliverable: full CLI/API, greenfield/new workflow, dry-run/readiness, budgets/deadlines, reports, provider degradation, deterministic/security/chaos InternBench, synthetic SWE cases, mini-product hidden evaluators, and certification report.
+Deliverable: full CLI/API, greenfield/new workflow, dry-run/readiness, budgets/deadlines, reports, provider degradation, evaluation metrics/regression ingestion/champion-challenger records, deterministic/security/chaos InternBench, synthetic SWE cases, mini-product hidden evaluators, and certification report.
 
 Gate: zero control/security violations, zero false factory `PASS` results, hidden critical journeys/clean bootstrap/deployed E2E pass for every claimed PASS, and architecture-defined full-product completion threshold is met.
 
