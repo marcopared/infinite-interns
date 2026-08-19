@@ -18,12 +18,15 @@ def main() -> None:
     workspace = Path(sys.argv[2])
     artifact_dir = Path(sys.argv[3])
     payload = json.loads(input_path.read_text())
+    attempt_id = str(payload["attempt_id"])
+    if not attempt_id or "/" in attempt_id or "\\" in attempt_id or ".." in attempt_id:
+        raise ValueError("attempt_id is not safe for a fixture output path")
 
-    output = workspace / "task-output.txt"
-    output.write_text(f"completed {payload['attempt_id']}\n")
+    output = workspace / f"task-output-{attempt_id}.txt"
+    output.write_text(f"completed {attempt_id}\n")
 
     result = {
-        "attempt_id": payload["attempt_id"],
+        "attempt_id": attempt_id,
         "lease_epoch": payload["lease_epoch"],
         "status": "succeeded",
     }
