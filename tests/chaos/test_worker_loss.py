@@ -50,9 +50,17 @@ async def test_replacement_epoch_rejects_crashed_workers_late_result() -> None:
 
         async with sessions() as session:
             results = WorkerResultService(session, run_id)
-            accepted_old = await results.accept("TASK-1", first.epoch, TaskStatus.DONE, now)
+            accepted_old = await results.accept(
+                "TASK-1",
+                first.epoch,
+                TaskStatus.CANDIDATE,
+                now + timedelta(seconds=92),
+            )
             accepted_new = await results.accept(
-                "TASK-1", second.epoch, TaskStatus.DONE, now + timedelta(seconds=92)
+                "TASK-1",
+                second.epoch,
+                TaskStatus.CANDIDATE,
+                now + timedelta(seconds=92),
             )
             await session.commit()
 
@@ -62,7 +70,7 @@ async def test_replacement_epoch_rejects_crashed_workers_late_result() -> None:
 
         assert not accepted_old
         assert accepted_new
-        assert task is not None and task.status is TaskStatus.DONE
+        assert task is not None and task.status is TaskStatus.CANDIDATE
         assert any(event.event_type == "STALE_WORKER_WRITE_REJECTED" for event in events)
     finally:
         await engine.dispose()
