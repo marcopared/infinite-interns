@@ -116,6 +116,7 @@ class TaskRepository:
         run_id: str,
         task_id: str,
         expected_epoch: int,
+        candidate_commit: str,
         occurred_at: datetime,
     ) -> bool:
         statement = (
@@ -138,6 +139,7 @@ class TaskRepository:
             )
             .values(
                 status=TaskStatus.CANDIDATE.value,
+                candidate_commit=candidate_commit,
                 lease_owner=None,
                 lease_expires_at=None,
             )
@@ -151,6 +153,7 @@ class TaskRepository:
         run_id: str,
         task_id: str,
         expected_epoch: int,
+        expected_candidate_commit: str,
     ) -> bool:
         statement = (
             update(TaskRow)
@@ -159,6 +162,7 @@ class TaskRepository:
                 TaskRow.task_id == task_id,
                 TaskRow.lease_epoch == expected_epoch,
                 TaskRow.status == TaskStatus.CANDIDATE.value,
+                TaskRow.candidate_commit == expected_candidate_commit,
             )
             .values(status=TaskStatus.DONE.value)
             .returning(TaskRow.task_id)
