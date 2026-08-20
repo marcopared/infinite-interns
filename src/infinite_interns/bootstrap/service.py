@@ -98,7 +98,18 @@ class BootstrapService:
     def persist_summary(self, run_id: str, summary: BaselineSummary) -> str:
         artifact_id = f"summary-{summary.base_commit[:20]}"
         payload = summary.model_dump_json(indent=2).encode()
-        return self._artifacts.put(run_id, "baseline", artifact_id, payload)
+        try:
+            return self._artifacts.put(run_id, "baseline", artifact_id, payload)
+        except FileExistsError:
+            artifact_ref = self._artifacts.ref(run_id, "baseline", artifact_id)
+            existing = BaselineSummary.model_validate_json(self._artifacts.get(artifact_ref))
+            if self._summary_identity(existing) != self._summary_identity(summary):
+                raise
+            return artifact_ref
+
+    @staticmethod
+    def _summary_identity(summary: BaselineSummary) -> dict[str, object]:
+        return summary.model_dump(exclude={"generated_at"})
 
     def _ensure_greenfield_control_baseline(
         self,
