@@ -47,16 +47,119 @@ Ruling: LangGraph's incomplete Pyright stub surface is isolated to `graph/factor
 
 Ruling: CI runs feature branches on pull requests only and `main` on push, with `cancel-in-progress` per workflow/ref. Superseded runs are not evidence; only the latest complete green run is recorded.
 
+Ruling: fake workers do not receive enough linked-worktree Git metadata to create candidate commits. Workers emit result material; the trusted executor validates the result envelope and materializes the candidate commit. This removes a privileged/shared mount from worker containers.
+
+Ruling: long integration serialization uses a dedicated PostgreSQL advisory-lock connection. Ordinary persistence transactions remain short and are not held across regression command execution.
+
 ## Progress
 
-Task 1 RED: Actions run `32308139332` failed during unit collection because `infinite_interns.graph` did not exist after locked sync and Ruff passed.
+### Task 1 — LangGraph shell and compact state
 
-Task 1 implementation: added locked LangGraph/FastAPI runtime, compact `FactoryState`, thin graph service/node shell, `langgraph.json`, custom FastAPI health route, and live Agent Server smoke gate.
+RED: Actions run `32308139332` failed during unit collection because `infinite_interns.graph` did not exist after locked sync and Ruff passed.
 
-Task 1 GREEN: Actions run `32309102027` passed locked sync, Ruff, unit tests, Alembic migration, integration tests, Pyright, and `langgraph dev` `/api/health` smoke verification.
+GREEN: Actions run `32309102027` passed locked sync, Ruff, unit tests, Alembic migration, integration tests, Pyright, and live `langgraph dev` `/api/health` smoke verification.
 
-Task 1 review: PASS; no Critical or Important findings. Minor: graph service methods remain intentionally non-authoritative placeholders until Task 6.
+Review: PASS; no remaining Critical/Important findings.
 
-Task 1: COMPLETE.
+Status: **COMPLETE**.
 
-Task 2: starting.
+### Task 2 — deterministic task DAG
+
+RED: cycle/readiness tests initially failed because `infinite_interns.scheduler` did not exist.
+
+GREEN: deterministic Kahn validation and lexical readiness passed the full branch gate.
+
+Review found one Important integrity defect: the frozen dataclass exposed mutable adjacency dictionaries. The defect was reproduced by regression test and fixed with immutable mapping/frozenset structure.
+
+Review: PASS after repair; no remaining Critical/Important findings.
+
+Status: **COMPLETE**.
+
+### Task 3 — PostgreSQL leases and fencing
+
+RED: Actions run `32309818530` reached integration collection and failed specifically because `infinite_interns.scheduler.leasing` did not yet exist. Unit tests and migration 0001 were green before the expected RED failure.
+
+Implementation added migration `0002_task_leases`, run-scoped claims with `FOR UPDATE SKIP LOCKED`, renewable leases, monotonic epochs, expiry/reclaim, and fail-closed epoch assertions.
+
+Review: PASS. Lease timestamps/TTL/owner validity are enforced; stale workers cannot retain authority after reclamation.
+
+Status: **COMPLETE**.
+
+### Task 4 — worktrees and executor contract
+
+Implementation added validated deterministic worktree identities, argv-only Git process invocation, typed executor request/handle/status contracts, and idempotent execution creation.
+
+Review found one Important packaging defect: the executor daemon was initially outside the installable package. Canonical code moved under `src/infinite_interns/executor`; duplicate root Python package was removed.
+
+Review: PASS after repair; no remaining Critical/Important findings.
+
+Status: **COMPLETE**.
+
+### Task 5 — Docker backend and fake workers
+
+Implementation added Docker execution, fake-worker image, workstation Compose, label-based restart recovery, isolated task worktree/artifact mounts, explicit resource/network policy, and candidate materialization in the trusted executor.
+
+Review repaired two Important findings: linked-worktree Git metadata would have required an extra privileged mount if the worker committed directly, and restart recovery initially returned short Docker IDs. Both are regression-covered.
+
+Review: PASS after repair; no remaining Critical/Important findings.
+
+Status: **COMPLETE**.
+
+### Task 6 — scheduler, recovery, stale-result authority
+
+Implementation added deterministic scheduler snapshots/priority/capacity/resource-lock handling, heartbeat/stall recovery classification, graph-node service wiring, and epoch-guarded worker-result acceptance with durable stale-write events.
+
+Chaos coverage proves a killed worker can be replaced at a higher epoch and the stale old result cannot publish authoritative state.
+
+Review: PASS; no remaining Critical/Important findings.
+
+Status: **COMPLETE**.
+
+### Task 7 — serialized integration and last-green preservation
+
+Implementation added durable integration state migration `0003_integration_state`, per-run advisory-lock serialization, regression-gated candidate integration, compare-on-expected-anchor DB advancement, and failure restoration to the prior green SHA.
+
+Review: PASS. Two non-blocking recovery observations remain around auxiliary Git-ref/DB atomicity; PostgreSQL stays authoritative and drift fails closed.
+
+Status: **COMPLETE**.
+
+### Task 8 — Stage 2 fake-factory certification
+
+`tests/integration/orchestration/test_stage2_acceptance.py` executes A/B concurrently-ready work, kills B attempt 1, reclaims B at a higher epoch, rejects the zombie result, integrates A/B2/C serially, verifies C stays blocked until both parents are done, and ends with all tasks `DONE` plus `current_commit == last_green_commit`.
+
+Supporting permanent tests prove executor-create idempotency, regression rejection preserving last-green, deterministic scheduler conflict/capacity behavior, Docker restart recovery, and that only the executor service receives `/var/run/docker.sock`.
+
+Behavioral certification run: GitHub Actions `32313309044` at head `e272daaa74b8a360225f34c34b6555cad7831d0e`.
+
+Evidence:
+
+```text
+locked dependency sync                         PASS
+ruff                                           PASS
+unit tests                                     PASS — 51
+alembic 0001 -> 0002 -> 0003                  PASS
+integration tests                              PASS — 10
+chaos tests                                    PASS — 1
+pyright                                        PASS — 0 errors/warnings
+workstation Compose validation                 PASS
+agent-server + executor image builds           PASS
+live LangGraph /api/health                     PASS
+```
+
+Review: PASS; no remaining Critical/Important findings. The acceptance/report/review documentation and stale ledger were reconciled after the behavioral run.
+
+Status: **BEHAVIOR CERTIFIED; FINAL BRANCH-HEAD CI PENDING AFTER DOC RECONCILIATION**.
+
+## Stage 2 completion gate
+
+| Required evidence | Result |
+|---|---|
+| dependency-safe tasks execute concurrently | PASS |
+| one killed worker is recovered | PASS |
+| stale lease-epoch writes are rejected | PASS |
+| repeated create requests are idempotent | PASS |
+| integration is serialized | PASS |
+| regression failure leaves `last_green_commit` unchanged | PASS |
+| no worker container has Docker socket access | PASS |
+
+The only remaining step before Stage 2 is merge-ready is a fresh full CI pass on the documentation-reconciled branch head.
