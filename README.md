@@ -270,14 +270,27 @@ The joke stops at the architecture boundary. The engineering documents use preci
 - Implementation roadmap: [`docs/superpowers/plans/2026-08-18-infinite-interns-implementation-roadmap.md`](docs/superpowers/plans/2026-08-18-infinite-interns-implementation-roadmap.md)
 - Plan self-review and execution order: [`docs/superpowers/plans/2026-08-18-plan-self-review.md`](docs/superpowers/plans/2026-08-18-plan-self-review.md)
 - Stage 1 plan: [`docs/superpowers/plans/2026-08-18-stage-1-deterministic-foundation.md`](docs/superpowers/plans/2026-08-18-stage-1-deterministic-foundation.md)
+- Stage 2 plan: [`docs/superpowers/plans/2026-08-18-stage-2-orchestration-execution.md`](docs/superpowers/plans/2026-08-18-stage-2-orchestration-execution.md)
 
 ## Development status
 
-Stage 1 — the deterministic foundation — is implemented on its feature branch and is undergoing final merge review. It includes the Python package, validated configuration, PostgreSQL control-plane schema, artifact store, evidence authority, environment doctor, status CLI, and Stage 1 acceptance tests.
+**Stage 1 — deterministic foundation: integrated.**
 
-Stage 2 adds durable orchestration, leases/fencing, isolated Docker/worktree execution, serialized integration, and crash recovery.
+**Stage 2 — durable orchestration and isolated execution: implementation complete; certification evidence is recorded on the Stage 2 branch.** It adds:
 
-To verify the current Stage 1 branch locally:
+- a compact LangGraph parent-graph shell and live Agent Server health route;
+- deterministic task DAG validation/readiness;
+- PostgreSQL task leases with `FOR UPDATE SKIP LOCKED`, renewable ownership, and monotonic fencing epochs;
+- isolated Git worktrees and a typed executor boundary;
+- Docker fake-worker execution where only the executor daemon receives the host Docker socket;
+- deterministic scheduler capacity/dependency/resource-lock decisions;
+- heartbeat/stall recovery and stale-worker rejection;
+- serialized, regression-gated integration anchored to durable `last_green_commit`;
+- a full fake-factory acceptance scenario that kills a worker, reclaims the task at a higher epoch, rejects the zombie result, and converges all DAG tasks to `DONE`.
+
+Stage 2 intentionally uses fake workers only. Real Codex/Kimi/DeepSeek execution begins in later stages after repository bootstrap, specification, context, and review interfaces are in place.
+
+### Verify Stage 2 locally
 
 ```bash
 uv sync --dev --locked
@@ -287,8 +300,12 @@ uv run alembic upgrade head
 uv run ruff check .
 uv run pytest tests/unit -q
 uv run pytest tests/integration -q
+uv run pytest tests/chaos -q
 uv run pyright
-uv run interns doctor
+docker compose -f docker-compose.workstation.yml config --quiet
+docker compose -f docker-compose.workstation.yml build agent-server executor
 ```
 
-The interns now have laptops. Management has already scheduled their performance reviews.
+The Stage 2 CI gate additionally launches `langgraph dev` and requires `/api/health` to return `{"status":"ok"}`.
+
+The interns now have isolated laptops, expiring badges, and a manager who remembers the last green commit.
