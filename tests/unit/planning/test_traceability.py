@@ -1,10 +1,10 @@
 from infinite_interns.planning.traceability import (
+    TraceabilityErrorCode,
+    TraceabilityGraph,
     TraceCriterion,
     TraceJustificationKind,
     TraceOracleGate,
     TraceTask,
-    TraceabilityErrorCode,
-    TraceabilityGraph,
 )
 
 
