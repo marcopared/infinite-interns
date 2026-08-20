@@ -6,12 +6,14 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from infinite_interns.db.engine import create_engine, create_session_factory
-from infinite_interns.db.repositories import EventRepository, RunRepository
-from infinite_interns.domain.enums import RunStatus
-from infinite_interns.domain.models import RunRecord
+from infinite_interns.db.models import TaskRow
+from infinite_interns.db.repositories import EventRepository, RunRepository, TaskRepository
+from infinite_interns.domain.enums import RiskClass, RunStatus, TaskStatus
+from infinite_interns.domain.models import RunRecord, TaskRecord
 from infinite_interns.integration.service import IntegrationService, IntegrationStatus
 
 
@@ -96,6 +98,52 @@ async def test_regression_failure_restores_checkout_and_preserves_last_green(tmp
         async with sessions() as session:
             events = await EventRepository(session).for_run(run_id)
         assert any(event.event_type == "INTEGRATION_REJECTED" for event in events)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failed_task_completion_restores_checkout_and_durable_anchor(tmp_path: Path) -> None:
+    _, checkout, base, candidate_a, _ = _fixture_repo(tmp_path)
+    run_id = f"run_{uuid4().hex}"
+    engine, sessions = await _seed_run(run_id, base)
+    service = IntegrationService(engine, sessions, checkout, ("python", "regression.py"))
+
+    try:
+        async with sessions() as session:
+            await TaskRepository(session).add(
+                TaskRecord(
+                    task_id="TASK-1",
+                    run_id=run_id,
+                    title="candidate",
+                    status=TaskStatus.CANDIDATE,
+                    risk=RiskClass.HIGH,
+                )
+            )
+            await session.execute(
+                update(TaskRow)
+                .where(TaskRow.run_id == run_id, TaskRow.task_id == "TASK-1")
+                .values(lease_epoch=1)
+            )
+            await session.commit()
+
+        await service.initialize(run_id, base, datetime.now(UTC))
+        with pytest.raises(RuntimeError, match="integration-eligible candidate"):
+            await service.integrate(
+                run_id,
+                candidate_a,
+                base,
+                task_id="TASK-1",
+                lease_epoch=2,
+            )
+
+        state = await service.state(run_id)
+        assert state.current_commit == base
+        assert state.last_green_commit == base
+        assert _run(["git", "rev-parse", "HEAD"], checkout) == base
+        async with sessions() as session:
+            task = await TaskRepository(session).get(run_id, "TASK-1")
+        assert task is not None and task.status is TaskStatus.CANDIDATE
     finally:
         await engine.dispose()
 
