@@ -21,18 +21,46 @@ This controller has GitHub repository access but no durable local checkout/workt
 | Task 6 | Stage 2 graph | parent graph ordering | Stage 2 graph currently routes directly to scheduler. **Ruling:** Stage 2B replaces the pre-spec path with bootstrap then `specification_pending`; scheduler service remains implemented but is not entered before Stage 3A planning. |
 | Task 6 | initial `FactoryState` | commit fields | Current state requires `current_commit`/`last_green_commit`, which cannot be known before greenfield bootstrap. **Ruling:** make them nullable until bootstrap/integration establishes them; release/integration code must continue to require concrete SHAs at its own boundary. |
 
-## Per-task self-consistency scan
+## Per-task result
 
 | Task | Result |
 | --- | --- |
-| 1 | Models/tests consistent after provenance fields above are included. |
-| 2 | Classification rules are deterministic; README/control-doc-only repositories remain greenfield. |
-| 3 | Guidance may be read but never executed; command execution is restricted to explicit detector rules or configured argv. |
-| 4 | Baseline failure execution must continue independent safe checks and capture bounded artifacts. |
-| 5 | Greenfield path must not create `src/`, framework files, schemas, dependencies, requirements, or tasks. |
-| 6 | Bootstrap must persist artifact + DB ref before specification can run; failure cannot route to `DONE`. |
+| 1 — baseline contracts | COMPLETE — strict immutable models, command provenance, guidance refs, pre-existing failure attribution. |
+| 2 — repository inspection | COMPLETE — deterministic brownfield/greenfield classification, Git snapshotting, dirty brownfield fail-closed by default. |
+| 3 — guidance and commands | COMPLETE — bounded manifest/config detection; guidance is hashed and explicitly untrusted repository content. |
+| 4 — brownfield baseline | COMPLETE — commands execute in a disposable detached worktree pinned to the recorded base commit; failures and output are external artifacts. |
+| 5 — greenfield baseline | COMPLETE — only neutral Git/control metadata is created; no product architecture or dependencies are invented. |
+| 6 — graph/runtime wiring | COMPLETE — baseline artifact + PostgreSQL reference are established before `specification_pending`; production Agent Server lifespan wires the real coordinator. |
 
-## Progress
+## Reproduced findings repaired during Stage 2B
 
-Stage 2B setup: COMPLETE.
-Task 1: starting RED phase.
+- dot-prefixed repository paths were initially normalized incorrectly; fixed with literal `./` prefix handling and regression coverage.
+- pnpm commands could initially be inferred without evidence that pnpm was selected; fixed by requiring a lockfile or explicit package-manager declaration.
+- baseline commands initially ran in the workload checkout and could mutate product source; fixed by executing from a detached worktree at the recorded commit.
+- the production LangGraph runtime initially lacked the real bootstrap composition root; fixed in the FastAPI lifespan and covered by an integration test.
+- an artifact-write / database-commit crash window initially caused retry collisions; fixed by recovering and validating the deterministic existing summary artifact.
+- dirty working-tree guidance could initially be hashed while carrying the clean base-commit SHA; fixed by performing guidance discovery and command detection in the detached base-commit worktree.
+- pre-bootstrap `FactoryState` initially represented unknown commit refs as empty strings; fixed by making `current_commit` and `last_green_commit` explicitly nullable until bootstrap establishes them.
+
+## Verification
+
+Fresh full gate on feature head `f340c692a83d1fb90159dd8b08cc78a28d3d9b12`, GitHub Actions run `393` (`32405502252`):
+
+- locked dependency sync: PASS
+- Ruff: PASS
+- unit tests: `71 passed`
+- Alembic migrations through `0004_run_baseline_ref`: PASS
+- integration tests: `20 passed`
+- chaos tests: `1 passed`
+- Pyright: `0 errors, 0 warnings`
+- workstation Compose validation: PASS
+- `agent-server` and `executor` image builds: PASS
+- live `langgraph dev` `/api/health` smoke: PASS
+
+A documentation-only ledger finalization follows this verified head and must receive its own CI result before merge.
+
+## Stage result
+
+Stage 2B implementation is **functionally complete pending the final CI result on the ledger-finalization commit and PR integration**. No agent assertion alone constitutes completion; the final branch and post-merge states remain evidence-gated.
+
+Stage 4 remains responsible for hardening the minimal bootstrap subprocess path into the approved sandbox/network/secret-isolation security boundary; Stage 2B does not claim that later release-grade boundary is already implemented.
