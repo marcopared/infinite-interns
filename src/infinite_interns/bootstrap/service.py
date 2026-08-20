@@ -15,7 +15,10 @@ from infinite_interns.bootstrap.models import (
     DetectedCommand,
     RepositoryKind,
 )
-from infinite_interns.bootstrap.repository import RepositoryInspector, RepositorySnapshot
+from infinite_interns.bootstrap.repository import (
+    RepositoryInspector,
+    RepositorySnapshot,
+)
 from infinite_interns.config import Settings
 from infinite_interns.context.guidance import GuidanceDiscoverer
 
