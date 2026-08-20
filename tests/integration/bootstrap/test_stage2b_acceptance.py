@@ -12,6 +12,7 @@ from infinite_interns.bootstrap.coordinator import (
     BootstrapResult,
 )
 from infinite_interns.bootstrap.models import BaselineSummary, RepositoryKind
+from infinite_interns.bootstrap.service import BootstrapService
 from infinite_interns.config import Settings
 from infinite_interns.db.engine import create_engine, create_session_factory
 from infinite_interns.db.repositories import RunRepository
@@ -59,6 +60,47 @@ async def test_bootstrap_persists_compact_baseline_reference(tmp_path: Path) -> 
         summary = BaselineSummary.model_validate_json(store.get(result.baseline_ref))
         assert summary.repo_kind is RepositoryKind.GREENFIELD
         assert summary.base_commit == result.base_commit
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_retry_recovers_artifact_written_before_db_commit(tmp_path: Path) -> None:
+    repo = tmp_path / "crash-product"
+    repo.mkdir()
+    run_id = f"run_{uuid4().hex}"
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    settings = Settings()
+    engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
+    sessions = create_session_factory(engine)
+
+    try:
+        async with sessions() as session:
+            await RunRepository(session).add(
+                RunRecord(
+                    run_id=run_id,
+                    repo=str(repo),
+                    base_commit="pending-bootstrap",
+                    status=RunStatus.CREATED,
+                    started_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+
+        service = BootstrapService(store)
+        orphaned_summary = service.run(repo, run_id, settings)
+        orphaned_ref = service.persist_summary(run_id, orphaned_summary)
+
+        result = await BootstrapCoordinator(sessions, store, settings).establish(run_id)
+
+        async with sessions() as session:
+            stored = await RunRepository(session).get(run_id)
+
+        assert result.baseline_ref == orphaned_ref
+        assert result.base_commit == orphaned_summary.base_commit
+        assert stored is not None
+        assert stored.baseline_ref == orphaned_ref
+        assert stored.base_commit == orphaned_summary.base_commit
     finally:
         await engine.dispose()
 
