@@ -65,6 +65,7 @@ class TaskRow(Base):
     lease_owner: Mapped[str | None] = mapped_column(String(128))
     lease_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    candidate_commit: Mapped[str | None] = mapped_column(String(64))
 
 
 class TaskDependencyRow(Base):

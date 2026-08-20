@@ -1,6 +1,6 @@
 """Repository boundary between SQLAlchemy rows and immutable domain records."""
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infinite_interns.domain.enums import (
@@ -109,12 +109,12 @@ class TaskRepository:
             risk=RiskClass(row.risk),
         )
 
-    async def set_status_if_epoch(
+    async def publish_candidate_if_active_lease(
         self,
         run_id: str,
         task_id: str,
         expected_epoch: int,
-        status: TaskStatus,
+        candidate_commit: str,
     ) -> bool:
         statement = (
             update(TaskRow)
@@ -122,8 +122,46 @@ class TaskRepository:
                 TaskRow.run_id == run_id,
                 TaskRow.task_id == task_id,
                 TaskRow.lease_epoch == expected_epoch,
+                TaskRow.lease_expires_at.is_not(None),
+                TaskRow.lease_expires_at > func.now(),
+                TaskRow.status.in_(
+                    (
+                        TaskStatus.CLAIMED.value,
+                        TaskStatus.RUNNING.value,
+                        TaskStatus.VERIFYING.value,
+                        TaskStatus.REVIEWING.value,
+                        TaskStatus.REPAIR.value,
+                    )
+                ),
             )
-            .values(status=status.value)
+            .values(
+                status=TaskStatus.CANDIDATE.value,
+                candidate_commit=candidate_commit,
+                lease_owner=None,
+                lease_expires_at=None,
+            )
+            .returning(TaskRow.task_id)
+        )
+        changed = (await self._session.execute(statement)).scalar_one_or_none()
+        return changed is not None
+
+    async def mark_done_after_integration(
+        self,
+        run_id: str,
+        task_id: str,
+        expected_epoch: int,
+        expected_candidate_commit: str,
+    ) -> bool:
+        statement = (
+            update(TaskRow)
+            .where(
+                TaskRow.run_id == run_id,
+                TaskRow.task_id == task_id,
+                TaskRow.lease_epoch == expected_epoch,
+                TaskRow.status == TaskStatus.CANDIDATE.value,
+                TaskRow.candidate_commit == expected_candidate_commit,
+            )
+            .values(status=TaskStatus.DONE.value)
             .returning(TaskRow.task_id)
         )
         changed = (await self._session.execute(statement)).scalar_one_or_none()

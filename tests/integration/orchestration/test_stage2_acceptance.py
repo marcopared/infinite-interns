@@ -172,15 +172,22 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
         await _wait_for_success(backend, handle_a.execution_id, request_a.operation_key)
 
         result_a = json.loads((artifact_a / "result.json").read_text())
-        integration = IntegrationService(engine, sessions, checkout, ("python", "regression.py"))
-        await integration.initialize(run_id, base, now)
-        integrated_a = await integration.integrate(run_id, result_a["candidate_commit"], base)
-        assert integrated_a.status is IntegrationStatus.ACCEPTED
         async with sessions() as session:
             assert await WorkerResultService(session, run_id).accept(
-                "A", lease_a.epoch, TaskStatus.DONE, now + timedelta(seconds=30)
+                "A", lease_a.epoch, result_a["candidate_commit"], now + timedelta(seconds=30)
             )
             await session.commit()
+
+        integration = IntegrationService(engine, sessions, checkout, ("python", "regression.py"))
+        await integration.initialize(run_id, base, now)
+        integrated_a = await integration.integrate(
+            run_id,
+            result_a["candidate_commit"],
+            base,
+            task_id="A",
+            lease_epoch=lease_a.epoch,
+        )
+        assert integrated_a.status is IntegrationStatus.ACCEPTED
 
         async with sessions() as session:
             lease_b2 = await LeaseService(
@@ -191,7 +198,7 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
 
         async with sessions() as session:
             stale_accepted = await WorkerResultService(session, run_id).accept(
-                "B", lease_b1.epoch, TaskStatus.DONE, now + timedelta(seconds=92)
+                "B", lease_b1.epoch, "f" * 40, now + timedelta(seconds=92)
             )
             await session.commit()
         assert not stale_accepted
@@ -216,17 +223,19 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
         handle_b2 = await backend.create(request_b2)
         await _wait_for_success(backend, handle_b2.execution_id, request_b2.operation_key)
         result_b2 = json.loads((artifact_b2 / "result.json").read_text())
+        async with sessions() as session:
+            assert await WorkerResultService(session, run_id).accept(
+                "B", lease_b2.epoch, result_b2["candidate_commit"], now + timedelta(seconds=93)
+            )
+            await session.commit()
         integrated_b = await integration.integrate(
             run_id,
             result_b2["candidate_commit"],
             integrated_a.last_green_commit,
+            task_id="B",
+            lease_epoch=lease_b2.epoch,
         )
         assert integrated_b.status is IntegrationStatus.ACCEPTED
-        async with sessions() as session:
-            assert await WorkerResultService(session, run_id).accept(
-                "B", lease_b2.epoch, TaskStatus.DONE, now + timedelta(seconds=93)
-            )
-            await session.commit()
 
         async with sessions() as session:
             a = await TaskRepository(session).get(run_id, "A")
@@ -271,17 +280,19 @@ async def test_stage2_fake_factory_recovers_worker_and_converges(tmp_path: Path)
         handle_c = await backend.create(request_c)
         await _wait_for_success(backend, handle_c.execution_id, request_c.operation_key)
         result_c = json.loads((artifact_c / "result.json").read_text())
+        async with sessions() as session:
+            assert await WorkerResultService(session, run_id).accept(
+                "C", lease_c.epoch, result_c["candidate_commit"], now + timedelta(seconds=94)
+            )
+            await session.commit()
         integrated_c = await integration.integrate(
             run_id,
             result_c["candidate_commit"],
             integrated_b.last_green_commit,
+            task_id="C",
+            lease_epoch=lease_c.epoch,
         )
         assert integrated_c.status is IntegrationStatus.ACCEPTED
-        async with sessions() as session:
-            assert await WorkerResultService(session, run_id).accept(
-                "C", lease_c.epoch, TaskStatus.DONE, now + timedelta(seconds=94)
-            )
-            await session.commit()
 
         final_state = await integration.state(run_id)
         assert final_state.current_commit == final_state.last_green_commit

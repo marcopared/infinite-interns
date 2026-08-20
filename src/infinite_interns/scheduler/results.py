@@ -1,13 +1,15 @@
 """Fenced publication of authoritative worker results."""
 
+import re
 from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infinite_interns.db.repositories import EventRepository, TaskRepository
-from infinite_interns.domain.enums import TaskStatus
 from infinite_interns.domain.models import EventRecord
+
+_FULL_GIT_OBJECT_ID = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\Z")
 
 
 class WorkerResultService:
@@ -19,18 +21,20 @@ class WorkerResultService:
         self,
         task_id: str,
         lease_epoch: int,
-        status: TaskStatus,
+        candidate_commit: str,
         occurred_at: datetime,
     ) -> bool:
         self._require_aware(occurred_at)
         if lease_epoch < 1:
             raise ValueError("lease_epoch must be positive")
+        if _FULL_GIT_OBJECT_ID.fullmatch(candidate_commit) is None:
+            raise ValueError("candidate commit must be a full 40- or 64-character Git object ID")
 
-        changed = await TaskRepository(self._session).set_status_if_epoch(
+        changed = await TaskRepository(self._session).publish_candidate_if_active_lease(
             self._run_id,
             task_id,
             lease_epoch,
-            status,
+            candidate_commit.lower(),
         )
         if changed:
             return True
@@ -42,7 +46,7 @@ class WorkerResultService:
                 event_type="STALE_WORKER_WRITE_REJECTED",
                 entity_type="task",
                 entity_id=task_id,
-                data={"lease_epoch": lease_epoch, "requested_status": status.value},
+                data={"lease_epoch": lease_epoch, "candidate_commit": candidate_commit.lower()},
                 occurred_at=occurred_at,
             )
         )

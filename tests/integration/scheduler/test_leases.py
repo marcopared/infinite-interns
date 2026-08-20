@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import update
 
 from infinite_interns.db.engine import create_engine, create_session_factory
+from infinite_interns.db.models import TaskRow
 from infinite_interns.db.repositories import RunRepository, TaskRepository
 from infinite_interns.domain.enums import RiskClass, RunStatus, TaskStatus
 from infinite_interns.domain.models import RunRecord, TaskRecord
@@ -80,6 +82,39 @@ async def test_renew_keeps_epoch_and_extends_expiry() -> None:
 
         assert renewed.epoch == lease.epoch
         assert renewed.expires_at > lease.expires_at
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_expired_lease_cannot_be_revived_by_backdating_renewal_timestamp() -> None:
+    run_id = f"run_{uuid4().hex}"
+    await _seed_ready_task(run_id, "TASK-1")
+    engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
+    sessions = create_session_factory(engine)
+    now = datetime.now(UTC)
+
+    try:
+        async with sessions() as session:
+            service = LeaseService(session, run_id, lease_ttl=timedelta(seconds=90))
+            lease = await service.claim_ready_task("worker-a", now)
+            assert lease is not None
+            await session.execute(
+                update(TaskRow)
+                .where(TaskRow.run_id == run_id, TaskRow.task_id == "TASK-1")
+                .values(lease_expires_at=now - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        async with sessions() as session:
+            service = LeaseService(session, run_id, lease_ttl=timedelta(seconds=90))
+            with pytest.raises(StaleLeaseError):
+                await service.renew(
+                    "TASK-1",
+                    "worker-a",
+                    lease.epoch,
+                    now - timedelta(minutes=5),
+                )
     finally:
         await engine.dispose()
 
