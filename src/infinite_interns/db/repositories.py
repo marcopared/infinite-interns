@@ -33,6 +33,7 @@ class RunRepository:
                 base_commit=record.base_commit,
                 status=record.status.value,
                 started_at=record.started_at,
+                baseline_ref=record.baseline_ref,
             )
         )
         await self._session.flush()
@@ -47,7 +48,23 @@ class RunRepository:
             base_commit=row.base_commit,
             status=RunStatus(row.status),
             started_at=row.started_at,
+            baseline_ref=row.baseline_ref,
         )
+
+    async def set_baseline(self, run_id: str, baseline_ref: str, base_commit: str) -> None:
+        result = await self._session.execute(
+            select(RunRow).where(RunRow.run_id == run_id).with_for_update()
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            raise KeyError(f"unknown run: {run_id}")
+        if row.baseline_ref is not None and row.baseline_ref != baseline_ref:
+            raise ValueError("run baseline reference is immutable once established")
+        if row.baseline_ref == baseline_ref and row.base_commit != base_commit:
+            raise ValueError("run baseline commit cannot change for an established reference")
+        row.baseline_ref = baseline_ref
+        row.base_commit = base_commit
+        await self._session.flush()
 
 
 class RequirementRepository:
