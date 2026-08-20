@@ -1,8 +1,14 @@
 name: ci
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
@@ -33,4 +39,30 @@ jobs:
       - run: uv run pytest tests/unit -q
       - run: uv run alembic upgrade head
       - run: uv run pytest tests/integration -q
+      - run: uv run pytest tests/chaos -q
       - run: uv run pyright
+      - name: Validate workstation Compose
+        run: docker compose -f docker-compose.workstation.yml config --quiet
+      - name: Build workstation control plane
+        run: docker compose -f docker-compose.workstation.yml build agent-server executor
+      - name: Smoke LangGraph Agent Server
+        run: |
+          : > .env
+          uv run langgraph dev --no-browser > /tmp/langgraph-dev.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:2024/api/health > /tmp/health.json; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("/tmp/health.json").read_text())
+          assert payload == {"status": "ok"}, payload
+          PY
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/langgraph-dev.log
+          exit 1

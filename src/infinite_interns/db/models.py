@@ -62,6 +62,9 @@ class TaskRow(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     risk: Mapped[str] = mapped_column(String(32), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TaskDependencyRow(Base):
@@ -162,6 +165,17 @@ class EventRow(Base):
     entity_id: Mapped[str | None] = mapped_column(String(64))
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IntegrationStateRow(Base):
+    __tablename__ = "integration_state"
+
+    run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ii.runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    current_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_green_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class DeploymentRow(Base):

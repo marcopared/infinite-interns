@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "factory": "./src/infinite_interns/graph/factory.py:graph"
+  },
+  "http": {
+    "app": "./src/infinite_interns/api/app.py:app"
+  },
+  "env": ".env"
+}
