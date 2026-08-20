@@ -53,13 +53,13 @@ async def test_replacement_epoch_rejects_crashed_workers_late_result() -> None:
             accepted_old = await results.accept(
                 "TASK-1",
                 first.epoch,
-                TaskStatus.CANDIDATE,
+                "a" * 40,
                 now + timedelta(seconds=92),
             )
             accepted_new = await results.accept(
                 "TASK-1",
                 second.epoch,
-                TaskStatus.CANDIDATE,
+                "b" * 40,
                 now + timedelta(seconds=92),
             )
             await session.commit()
