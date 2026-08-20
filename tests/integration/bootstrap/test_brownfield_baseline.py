@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 from infinite_interns.artifacts.filesystem import FilesystemArtifactStore
@@ -116,3 +117,34 @@ def test_brownfield_baseline_cannot_modify_workload_checkout(tmp_path: Path) -> 
     assert summary.base_commit == base_commit
     assert (repo / "src" / "app.py").read_text() == "VALUE = 1\n"
     assert _git(repo, "status", "--porcelain=v1") == ""
+
+
+def test_dirty_override_reads_guidance_from_recorded_commit_not_working_tree(tmp_path: Path) -> None:
+    repo, _ = _brownfield_repo(tmp_path)
+    committed_guidance = b"# committed guidance\n"
+    (repo / "AGENTS.md").write_bytes(committed_guidance)
+    _git(repo, "add", "AGENTS.md")
+    _git(
+        repo,
+        "-c",
+        "user.name=InfiniteInterns Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "add guidance",
+    )
+    base_commit = _git(repo, "rev-parse", "HEAD")
+    (repo / "AGENTS.md").write_text("# uncommitted injected guidance\n")
+
+    summary = BootstrapService(FilesystemArtifactStore(tmp_path / "artifacts")).run(
+        repo,
+        "run-dirty-provenance",
+        Settings(bootstrap=BootstrapSettings(allow_dirty=True)),
+    )
+
+    guidance = next(ref for ref in summary.guidance_refs if ref.path == "AGENTS.md")
+    assert summary.base_commit == base_commit
+    assert guidance.commit_sha == base_commit
+    assert guidance.content_sha256 == sha256(committed_guidance).hexdigest()
+    assert (repo / "AGENTS.md").read_text() == "# uncommitted injected guidance\n"
