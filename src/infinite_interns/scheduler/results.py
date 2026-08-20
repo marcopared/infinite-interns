@@ -25,12 +25,14 @@ class WorkerResultService:
         self._require_aware(occurred_at)
         if lease_epoch < 1:
             raise ValueError("lease_epoch must be positive")
+        if status is not TaskStatus.CANDIDATE:
+            raise ValueError("workers may only publish CANDIDATE task status")
 
-        changed = await TaskRepository(self._session).set_status_if_epoch(
+        changed = await TaskRepository(self._session).publish_candidate_if_active_lease(
             self._run_id,
             task_id,
             lease_epoch,
-            status,
+            occurred_at,
         )
         if changed:
             return True
