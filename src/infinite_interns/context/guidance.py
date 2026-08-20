@@ -1,6 +1,6 @@
 """Repository guidance discovery with explicit trust and provenance."""
 
-import hashlib
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
 from infinite_interns.bootstrap.models import GuidanceRef
@@ -45,7 +45,7 @@ class GuidanceDiscoverer:
                 GuidanceRef(
                     path=pure.as_posix(),
                     commit_sha=commit_sha,
-                    content_sha256=hashlib.sha256(data).hexdigest(),
+                    content_sha256=sha256(data).hexdigest(),
                 )
             )
         return tuple(refs)
