@@ -59,7 +59,9 @@ def _run_git(repo: Path, *args: str) -> str:
 
 
 def _is_control_only(path: str) -> bool:
-    normalized = PurePosixPath(path).as_posix().lstrip("./")
+    normalized = PurePosixPath(path).as_posix()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     return normalized in _CONTROL_FILENAMES or normalized.startswith(_CONTROL_PREFIXES)
 
 
