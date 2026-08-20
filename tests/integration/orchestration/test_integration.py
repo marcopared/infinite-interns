@@ -103,7 +103,7 @@ async def test_regression_failure_restores_checkout_and_preserves_last_green(tmp
 
 
 @pytest.mark.asyncio
-async def test_failed_task_completion_restores_checkout_and_durable_anchor(tmp_path: Path) -> None:
+async def test_candidate_commit_misbinding_restores_checkout_and_durable_anchor(tmp_path: Path) -> None:
     _, checkout, base, candidate_a, _ = _fixture_repo(tmp_path)
     run_id = f"run_{uuid4().hex}"
     engine, sessions = await _seed_run(run_id, base)
@@ -123,7 +123,7 @@ async def test_failed_task_completion_restores_checkout_and_durable_anchor(tmp_p
             await session.execute(
                 update(TaskRow)
                 .where(TaskRow.run_id == run_id, TaskRow.task_id == "TASK-1")
-                .values(lease_epoch=1)
+                .values(lease_epoch=1, candidate_commit="b" * 40)
             )
             await session.commit()
 
@@ -134,7 +134,7 @@ async def test_failed_task_completion_restores_checkout_and_durable_anchor(tmp_p
                 candidate_a,
                 base,
                 task_id="TASK-1",
-                lease_epoch=2,
+                lease_epoch=1,
             )
 
         state = await service.state(run_id)
