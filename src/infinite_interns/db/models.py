@@ -168,6 +168,17 @@ class EventRow(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class IntegrationStateRow(Base):
+    __tablename__ = "integration_state"
+
+    run_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ii.runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    current_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_green_commit: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class DeploymentRow(Base):
     __tablename__ = "deployments"
 
