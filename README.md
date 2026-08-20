@@ -276,7 +276,7 @@ The joke stops at the architecture boundary. The engineering documents use preci
 
 **Stage 1 — deterministic foundation: integrated.**
 
-**Stage 2 — durable orchestration and isolated execution: implementation complete; certification evidence is recorded on the Stage 2 branch.** It adds:
+**Stage 2 — durable orchestration and isolated execution: merge-ready on its feature branch.** It adds:
 
 - a compact LangGraph parent-graph shell and live Agent Server health route;
 - deterministic task DAG validation/readiness;
