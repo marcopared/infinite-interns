@@ -63,7 +63,7 @@ async def test_expired_unreclaimed_lease_cannot_publish_candidate() -> None:
             accepted = await WorkerResultService(session, run_id).accept(
                 task_id,
                 lease.epoch,
-                TaskStatus.CANDIDATE,
+                "a" * 40,
                 now + timedelta(seconds=91),
             )
             await session.commit()
@@ -78,9 +78,9 @@ async def test_expired_unreclaimed_lease_cannot_publish_candidate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_result_cannot_mark_task_done() -> None:
+async def test_worker_publication_requires_full_candidate_commit() -> None:
     run_id = f"run_{uuid4().hex}"
-    task_id = "TASK-DONE"
+    task_id = "TASK-COMMIT"
     await _seed_ready_task(run_id, task_id)
     engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
     sessions = create_session_factory(engine)
@@ -92,12 +92,44 @@ async def test_worker_result_cannot_mark_task_done() -> None:
             assert lease is not None
 
         async with sessions() as session:
-            with pytest.raises(ValueError, match="CANDIDATE"):
+            with pytest.raises(ValueError, match="candidate commit"):
                 await WorkerResultService(session, run_id).accept(
                     task_id,
                     lease.epoch,
-                    TaskStatus.DONE,
+                    "done",
                     now + timedelta(seconds=1),
                 )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_active_worker_can_only_publish_candidate_state() -> None:
+    run_id = f"run_{uuid4().hex}"
+    task_id = "TASK-CANDIDATE"
+    await _seed_ready_task(run_id, task_id)
+    engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
+    sessions = create_session_factory(engine)
+    now = datetime.now(UTC)
+
+    try:
+        async with sessions() as session:
+            lease = await LeaseService(session, run_id).claim_ready_task("worker-a", now)
+            assert lease is not None
+
+        async with sessions() as session:
+            accepted = await WorkerResultService(session, run_id).accept(
+                task_id,
+                lease.epoch,
+                "b" * 40,
+                now + timedelta(seconds=1),
+            )
+            await session.commit()
+
+        async with sessions() as session:
+            task = await TaskRepository(session).get(run_id, task_id)
+
+        assert accepted
+        assert task is not None and task.status is TaskStatus.CANDIDATE
     finally:
         await engine.dispose()
