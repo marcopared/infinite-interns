@@ -26,7 +26,9 @@ The fake worker is intentionally deterministic. Stage 2 is certifying orchestrat
 
 ## Evidence review
 
-GitHub Actions run `32313309044` passed:
+Behavioral certification run `32313309044` passed the complete Stage 2 executable gate on implementation head `e272daaa74b8a360225f34c34b6555cad7831d0e`.
+
+After README/AGENTS/certification-ledger reconciliation, branch-head run `32390648936` also passed every gate on head `b77c432a25084c132b635390fb9c9313c5bf67b2`:
 
 - locked dependency sync;
 - Ruff;
@@ -55,7 +57,7 @@ GitHub Actions run `32313309044` passed:
 
 No Critical or Important findings remain.
 
-Minor — the execution ledger was stale during implementation and stopped reflecting progress after Task 1. This is a process-recording defect, not an orchestration defect. The ledger is being reconciled before merge.
+Minor — the execution ledger was stale during implementation and stopped reflecting progress after Task 1. This was reconciled before merge review.
 
 Minor — auxiliary integration Git refs can temporarily drift from PostgreSQL if a failure happens between Git-ref and DB updates. PostgreSQL remains authoritative and the implementation fails closed on drift; automatic reconciliation belongs to later recovery hardening.
 
@@ -65,4 +67,4 @@ Spec: **PASS**.
 
 Quality: **PASS**.
 
-Stage 2 behavior is certified. The branch must still receive one final green CI run after the documentation/ledger reconciliation commits before it is considered ready to merge.
+Stage 2 is **MERGE-READY** once the final CI run for this review-only head remains green. The actual integration decision belongs to the human branch-finishing step.
