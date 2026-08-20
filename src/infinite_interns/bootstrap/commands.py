@@ -78,10 +78,18 @@ class CommandDetector:
             return []
 
         raw = cast(dict[str, Any], json.loads(manifest.read_text(encoding="utf-8")))
+        package_manager = raw.get("packageManager")
+        has_pnpm_lock = (repo / "pnpm-lock.yaml").is_file()
+        declares_pnpm = isinstance(package_manager, str) and (
+            package_manager == "pnpm" or package_manager.startswith("pnpm@")
+        )
+        if not has_pnpm_lock and not declares_pnpm:
+            return []
+
         scripts_raw = raw.get("scripts", {})
         scripts = cast(dict[str, Any], scripts_raw) if isinstance(scripts_raw, dict) else {}
         commands: list[DetectedCommand] = []
-        if (repo / "pnpm-lock.yaml").is_file():
+        if has_pnpm_lock:
             commands.append(
                 DetectedCommand(
                     kind=CommandKind.INSTALL,
@@ -100,7 +108,7 @@ class CommandDetector:
             ("start", CommandKind.START, ("pnpm", "run", "start")),
         )
         for script_name, kind, argv in script_map:
-            if script_name in scripts:
+            if isinstance(scripts.get(script_name), str):
                 commands.append(
                     DetectedCommand(
                         kind=kind,
