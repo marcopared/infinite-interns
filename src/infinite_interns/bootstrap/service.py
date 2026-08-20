@@ -31,6 +31,8 @@ _BASELINE_EXECUTABLE_KINDS = {
     CommandKind.UNIT,
     CommandKind.INTEGRATION,
 }
+_FACTORY_IGNORE_ENTRY = ".infinite-interns/"
+_GREENFIELD_COMMIT_MESSAGE = "chore: initialize greenfield baseline"
 
 
 class BootstrapService:
@@ -49,6 +51,9 @@ class BootstrapService:
 
     def run(self, repo: Path, run_id: str, settings: Settings) -> BaselineSummary:
         snapshot = self._inspector.inspect(repo, allow_dirty=settings.bootstrap.allow_dirty)
+        if snapshot.repo_kind is RepositoryKind.GREENFIELD:
+            snapshot = self._ensure_greenfield_control_baseline(snapshot, settings)
+
         commands = self._commands.detect(snapshot.path, settings.bootstrap)
         guidance = self._guidance.discover(
             snapshot.path,
@@ -94,6 +99,49 @@ class BootstrapService:
         artifact_id = f"summary-{summary.base_commit[:20]}"
         payload = summary.model_dump_json(indent=2).encode()
         return self._artifacts.put(run_id, "baseline", artifact_id, payload)
+
+    def _ensure_greenfield_control_baseline(
+        self,
+        snapshot: RepositorySnapshot,
+        settings: Settings,
+    ) -> RepositorySnapshot:
+        if snapshot.dirty:
+            return snapshot
+
+        ignore_path = snapshot.path / ".gitignore"
+        existing = ignore_path.read_text() if ignore_path.exists() else ""
+        entries = existing.splitlines()
+        if _FACTORY_IGNORE_ENTRY in entries:
+            return snapshot
+
+        prefix = existing
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        ignore_path.write_text(f"{prefix}{_FACTORY_IGNORE_ENTRY}\n")
+        self._git(snapshot.path, "add", ".gitignore")
+        self._git(
+            snapshot.path,
+            "-c",
+            "user.name=InfiniteInterns",
+            "-c",
+            "user.email=bootstrap@infinite-interns.invalid",
+            "commit",
+            "-m",
+            _GREENFIELD_COMMIT_MESSAGE,
+        )
+        return self._inspector.inspect(
+            snapshot.path,
+            allow_dirty=settings.bootstrap.allow_dirty,
+        )
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
 
     @staticmethod
     def _add_baseline_worktree(snapshot: RepositorySnapshot, baseline_repo: Path) -> None:
