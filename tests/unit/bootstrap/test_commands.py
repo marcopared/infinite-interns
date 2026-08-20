@@ -44,12 +44,20 @@ def test_detects_pnpm_scripts_from_package_manifest(tmp_path: Path) -> None:
 
 def test_mixed_repo_keeps_independent_unit_commands(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname='fixture'\ndependencies=['pytest']\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "vitest"}}))
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
 
     commands = _commands(tmp_path)
 
     assert ("uv", "run", "pytest") in commands[CommandKind.UNIT]
     assert ("pnpm", "test") in commands[CommandKind.UNIT]
+
+
+def test_bare_package_json_does_not_guess_pnpm(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "vitest"}}))
+
+    assert CommandDetector().detect(tmp_path, BootstrapSettings()) == ()
 
 
 def test_operator_override_replaces_heuristic_for_kind(tmp_path: Path) -> None:
