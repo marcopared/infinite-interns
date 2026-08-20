@@ -1,10 +1,9 @@
 """Repository guidance discovery with explicit trust and provenance."""
 
-from pathlib import Path, PurePosixPath
 from hashlib import sha256
+from pathlib import Path, PurePosixPath
 
 from ..bootstrap.models import GuidanceRef
-
 
 _KNOWN_GUIDANCE = (
     "AGENTS.md",
