@@ -3,7 +3,7 @@
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
-from infinite_interns.bootstrap.models import GuidanceRef
+from ..bootstrap.models import GuidanceRef
 
 
 _KNOWN_GUIDANCE = (
