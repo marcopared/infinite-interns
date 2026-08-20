@@ -42,13 +42,14 @@ async def _seed_ready_task(run_id: str, task_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_expired_unreclaimed_lease_cannot_publish_candidate() -> None:
+async def test_expired_lease_cannot_be_revived_by_backdating_result_timestamp() -> None:
     run_id = f"run_{uuid4().hex}"
     task_id = "TASK-EXPIRED"
     await _seed_ready_task(run_id, task_id)
     engine = create_engine(os.environ["INFINITE_INTERNS_DATABASE_URL"])
     sessions = create_session_factory(engine)
-    now = datetime.now(UTC)
+    authoritative_now = datetime.now(UTC)
+    old_claim_time = authoritative_now - timedelta(minutes=2)
 
     try:
         async with sessions() as session:
@@ -56,15 +57,16 @@ async def test_expired_unreclaimed_lease_cannot_publish_candidate() -> None:
                 session,
                 run_id,
                 lease_ttl=timedelta(seconds=90),
-            ).claim_ready_task("worker-a", now)
+            ).claim_ready_task("worker-a", old_claim_time)
             assert lease is not None
+            assert lease.expires_at < authoritative_now
 
         async with sessions() as session:
             accepted = await WorkerResultService(session, run_id).accept(
                 task_id,
                 lease.epoch,
                 "a" * 40,
-                now + timedelta(seconds=91),
+                old_claim_time + timedelta(seconds=1),
             )
             await session.commit()
 
