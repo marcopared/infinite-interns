@@ -1,8 +1,6 @@
 """Repository boundary between SQLAlchemy rows and immutable domain records."""
 
-from datetime import datetime
-
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infinite_interns.domain.enums import (
@@ -117,7 +115,6 @@ class TaskRepository:
         task_id: str,
         expected_epoch: int,
         candidate_commit: str,
-        occurred_at: datetime,
     ) -> bool:
         statement = (
             update(TaskRow)
@@ -126,7 +123,7 @@ class TaskRepository:
                 TaskRow.task_id == task_id,
                 TaskRow.lease_epoch == expected_epoch,
                 TaskRow.lease_expires_at.is_not(None),
-                TaskRow.lease_expires_at > occurred_at,
+                TaskRow.lease_expires_at > func.now(),
                 TaskRow.status.in_(
                     (
                         TaskStatus.CLAIMED.value,
