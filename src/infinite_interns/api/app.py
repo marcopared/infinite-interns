@@ -1,7 +1,7 @@
 """Custom HTTP routes and runtime composition for the LangGraph Agent Server."""
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +15,7 @@ from infinite_interns.graph.nodes import FactoryGraphServices, configure_service
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     database_url = os.environ.get("INFINITE_INTERNS_DATABASE_URL")
     if not database_url:
         raise RuntimeError("INFINITE_INTERNS_DATABASE_URL is required")
