@@ -54,19 +54,19 @@ class BootstrapService:
         if snapshot.repo_kind is RepositoryKind.GREENFIELD:
             snapshot = self._ensure_greenfield_control_baseline(snapshot, settings)
 
-        commands = self._commands.detect(snapshot.path, settings.bootstrap)
-        guidance = self._guidance.discover(
-            snapshot.path,
-            commit_sha=snapshot.base_commit,
-            configured_docs=settings.bootstrap.configured_guidance_docs,
-        )
         failures: list[BaselineFailure] = []
+        with TemporaryDirectory(prefix="infinite-interns-baseline-") as temporary_root:
+            baseline_repo = Path(temporary_root) / "repo"
+            self._add_baseline_worktree(snapshot, baseline_repo)
+            try:
+                commands = self._commands.detect(baseline_repo, settings.bootstrap)
+                guidance = self._guidance.discover(
+                    baseline_repo,
+                    commit_sha=snapshot.base_commit,
+                    configured_docs=settings.bootstrap.configured_guidance_docs,
+                )
 
-        if snapshot.repo_kind is RepositoryKind.BROWNFIELD:
-            with TemporaryDirectory(prefix="infinite-interns-baseline-") as temporary_root:
-                baseline_repo = Path(temporary_root) / "repo"
-                self._add_baseline_worktree(snapshot, baseline_repo)
-                try:
+                if snapshot.repo_kind is RepositoryKind.BROWNFIELD:
                     for command in commands:
                         if command.kind not in _BASELINE_EXECUTABLE_KINDS:
                             continue
@@ -79,8 +79,8 @@ class BootstrapService:
                         )
                         if failure is not None:
                             failures.append(failure)
-                finally:
-                    self._remove_baseline_worktree(snapshot, baseline_repo)
+            finally:
+                self._remove_baseline_worktree(snapshot, baseline_repo)
 
         languages, package_managers = self._environment_hints(snapshot)
         return BaselineSummary(
