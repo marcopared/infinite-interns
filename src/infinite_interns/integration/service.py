@@ -216,6 +216,7 @@ class IntegrationService:
                     run_id,
                     task_id,
                     lease_epoch,
+                    candidate_commit.lower(),
                 )
                 if not completed:
                     await session.rollback()
