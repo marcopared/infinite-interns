@@ -79,7 +79,9 @@ async def test_parent_graph_bootstraps_before_specification_entry() -> None:
     fake = _FakeBootstrap()
     configure_services(FactoryGraphServices(bootstrap_establisher=fake))
     try:
-        result = await graph.ainvoke({"run_id": "run_graph"})
+        result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]
+            FactoryState(run_id="run_graph")
+        )
     finally:
         configure_services(FactoryGraphServices())
 
