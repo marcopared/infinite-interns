@@ -1,7 +1,7 @@
 """Repository guidance discovery with explicit trust and provenance."""
 
-from hashlib import sha256
 from pathlib import Path, PurePosixPath
+from hashlib import sha256
 
 from ..bootstrap.models import GuidanceRef
 
