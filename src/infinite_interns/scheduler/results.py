@@ -35,7 +35,6 @@ class WorkerResultService:
             task_id,
             lease_epoch,
             candidate_commit.lower(),
-            occurred_at,
         )
         if changed:
             return True
