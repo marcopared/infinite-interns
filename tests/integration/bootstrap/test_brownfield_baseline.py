@@ -94,3 +94,25 @@ def test_baseline_output_replaces_absolute_repo_path_before_persistence(tmp_path
     payload = store.get(summary.failures[0].artifact_uri).decode()
     assert str(repo) not in payload
     assert "<repo>" in payload
+
+
+def test_brownfield_baseline_cannot_modify_workload_checkout(tmp_path: Path) -> None:
+    repo, base_commit = _brownfield_repo(tmp_path)
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    settings = Settings(
+        bootstrap=BootstrapSettings(
+            command_overrides={
+                "lint": (
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; Path('src/app.py').write_text('MUTATED\\n')",
+                )
+            }
+        )
+    )
+
+    summary = BootstrapService(store).run(repo, "run-isolated", settings)
+
+    assert summary.base_commit == base_commit
+    assert (repo / "src" / "app.py").read_text() == "VALUE = 1\n"
+    assert _git(repo, "status", "--porcelain=v1") == ""
