@@ -52,7 +52,15 @@ def test_empty_directory_becomes_greenfield_git_baseline(tmp_path: Path) -> None
 
 
 def test_repo_with_only_control_docs_is_greenfield(tmp_path: Path) -> None:
-    repo = _committed_repo(tmp_path, {"README.md": "# product\n", "docs/spec.md": "goal\n"})
+    repo = _committed_repo(
+        tmp_path,
+        {
+            "README.md": "# product\n",
+            "docs/spec.md": "goal\n",
+            ".gitignore": ".venv/\n",
+            ".github/workflows/ci.yml": "name: ci\n",
+        },
+    )
 
     snapshot = RepositoryInspector().inspect(repo)
 
