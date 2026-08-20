@@ -13,7 +13,7 @@ from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from infinite_interns.db.models import IntegrationStateRow
-from infinite_interns.db.repositories import EventRepository
+from infinite_interns.db.repositories import EventRepository, TaskRepository
 from infinite_interns.domain.models import EventRecord
 
 
@@ -97,10 +97,17 @@ class IntegrationService:
         run_id: str,
         candidate_commit: str,
         expected_last_green: str,
+        *,
+        task_id: str | None = None,
+        lease_epoch: int | None = None,
     ) -> IntegrationResult:
         self._validate_run_id(run_id)
         if not candidate_commit or not expected_last_green:
             raise ValueError("candidate and expected last-green commits must be non-empty")
+        if (task_id is None) != (lease_epoch is None):
+            raise ValueError("task_id and lease_epoch must be supplied together")
+        if lease_epoch is not None and lease_epoch < 1:
+            raise ValueError("lease_epoch must be positive")
 
         async with self._engine.connect() as lock_connection:
             await lock_connection.execute(
@@ -109,7 +116,13 @@ class IntegrationService:
             )
             await lock_connection.commit()
             try:
-                return await self._integrate_locked(run_id, candidate_commit, expected_last_green)
+                return await self._integrate_locked(
+                    run_id,
+                    candidate_commit,
+                    expected_last_green,
+                    task_id=task_id,
+                    lease_epoch=lease_epoch,
+                )
             finally:
                 await lock_connection.execute(
                     text("SELECT pg_advisory_unlock(hashtextextended(:run_id, 0))"),
@@ -122,6 +135,9 @@ class IntegrationService:
         run_id: str,
         candidate_commit: str,
         expected_last_green: str,
+        *,
+        task_id: str | None,
+        lease_epoch: int | None,
     ) -> IntegrationResult:
         state = await self.state(run_id)
         if state.last_green_commit != expected_last_green:
@@ -167,9 +183,10 @@ class IntegrationService:
             )
 
         new_green = await self._git("rev-parse", "HEAD")
+        integration_ref = self._integration_ref(run_id)
         await self._git(
             "update-ref",
-            self._integration_ref(run_id),
+            integration_ref,
             new_green,
             expected_last_green,
         )
@@ -191,7 +208,20 @@ class IntegrationService:
             changed = (await session.execute(statement)).scalar_one_or_none()
             if changed is None:
                 await session.rollback()
+                await self._restore_git_anchor(integration_ref, expected_last_green, new_green)
                 raise RuntimeError("last-green state changed while integration lock was held")
+
+            if task_id is not None and lease_epoch is not None:
+                completed = await TaskRepository(session).mark_done_after_integration(
+                    run_id,
+                    task_id,
+                    lease_epoch,
+                )
+                if not completed:
+                    await session.rollback()
+                    await self._restore_git_anchor(integration_ref, expected_last_green, new_green)
+                    raise RuntimeError("task is not an integration-eligible candidate")
+
             await session.commit()
 
         return IntegrationResult(
@@ -200,6 +230,15 @@ class IntegrationService:
             last_green_commit=new_green,
             candidate_commit=candidate_commit,
         )
+
+    async def _restore_git_anchor(
+        self,
+        integration_ref: str,
+        expected_last_green: str,
+        new_green: str,
+    ) -> None:
+        await self._git("update-ref", integration_ref, expected_last_green, new_green)
+        await self._git("switch", "--detach", expected_last_green)
 
     async def _reject(
         self,
