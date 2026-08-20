@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml  # pyright: ignore[reportMissingTypeStubs]
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,34 @@ class ModelSettings(StrictConfigModel):
     diagnostician: str = "deepseek-v4-pro"
 
 
+_BOOTSTRAP_COMMAND_KINDS = {
+    "install",
+    "build",
+    "typecheck",
+    "lint",
+    "unit",
+    "integration",
+    "start",
+}
+
+
+class BootstrapSettings(StrictConfigModel):
+    command_timeout_seconds: int = Field(default=300, gt=0, le=3600)
+    allow_dirty: bool = False
+    command_overrides: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    configured_guidance_docs: tuple[str, ...] = ()
+
+    @field_validator("command_overrides")
+    @classmethod
+    def validate_overrides(cls, value: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+        for kind, argv in value.items():
+            if kind not in _BOOTSTRAP_COMMAND_KINDS:
+                raise ValueError(f"unsupported bootstrap command kind: {kind}")
+            if not argv or any(not token or "\x00" in token for token in argv):
+                raise ValueError("bootstrap command overrides require non-empty NUL-free argv")
+        return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="INFINITE_INTERNS_",
@@ -61,6 +89,7 @@ class Settings(BaseSettings):
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     models: ModelSettings = Field(default_factory=ModelSettings)
+    bootstrap: BootstrapSettings = Field(default_factory=BootstrapSettings)
 
 
 def load_settings(path: Path | None = None) -> Settings:

@@ -49,6 +49,7 @@ class RunRecord(StrictModel):
     base_commit: str
     status: RunStatus
     started_at: datetime
+    baseline_ref: str | None = None
 
 
 class EventRecord(StrictModel):

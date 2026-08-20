@@ -35,15 +35,15 @@ No agent may directly mark a requirement verified, a release passed, or a run `D
 
 ## Current phase
 
-Stage 1 deterministic foundation is integrated on `main`.
+Stages 1 and 2 are integrated on `main`: the deterministic authority foundation plus durable LangGraph orchestration, PostgreSQL task ownership/leases/fencing, isolated worktrees and Docker workers, crash recovery, stale-worker rejection, and serialized regression-gated integration around `last_green_commit`.
 
-Stage 2 durable orchestration/execution is implemented on `impl/stage-2-orchestration-execution` and is in final certification/merge review. Stage 2 adds the LangGraph shell, deterministic DAG scheduling, PostgreSQL leases/fencing, isolated worktrees and Docker workers, crash recovery, stale-worker rejection, and serialized regression-gated integration around `last_green_commit`.
+Stage 2B repository bootstrap is implemented on `impl/stage-2b-repository-bootstrap` and is in final certification/merge review. It adds deterministic brownfield/greenfield classification, bounded provenance-aware guidance and command discovery, isolated brownfield baseline execution, neutral greenfield initialization, immutable baseline artifacts, crash-safe baseline reference recovery, and mandatory `bootstrap -> specification_pending` graph ordering.
 
-After Stage 2 lands, the next implementation stage is **Stage 2B — repository bootstrap**. Do not start Stage 2B until the Stage 2 acceptance gate is green and Stage 2 is integrated.
+After Stage 2B is integrated, the next implementation stage is **Stage 3A — specification/planning**. Do not enter specification/planning without a persisted `baseline_ref`, and do not start Stage 3A implementation until the Stage 2B acceptance gate is green and Stage 2B is integrated.
 
-Stage execution evidence and per-task review records are under `docs/superpowers/plans/2026-08-18-stage-1-*` and `docs/superpowers/plans/2026-08-18-stage-2-*`.
+Stage execution evidence and per-task review records are under `docs/superpowers/plans/2026-08-18-stage-1-*`, `docs/superpowers/plans/2026-08-18-stage-2-*`, and `docs/superpowers/plans/2026-08-20-stage-2b-*`.
 
-## Stage 2 verification
+## Current verification gate
 
 ```bash
 uv sync --dev --locked
@@ -67,10 +67,16 @@ export INFINITE_INTERNS_DATABASE_URL='postgresql+psycopg://interns:interns@127.0
 uv run alembic upgrade head
 ```
 
-## Stage 2 authority boundaries
+Runtime bootstrap also uses `INFINITE_INTERNS_ARTIFACT_ROOT` when set; otherwise artifacts are rooted at `.infinite-interns/artifacts`.
 
-- PostgreSQL is authoritative for task ownership, leases/fencing, durable task state, events, and integration anchors.
+## Authority boundaries
+
+- PostgreSQL is authoritative for task ownership, leases/fencing, durable task state, events, integration anchors, and each run's `baseline_ref`.
 - LangGraph graph state contains refs/status summaries only; graph nodes do not become an alternate database.
+- Repository bootstrap records a base commit before implementation work and cannot enter specification without a durable baseline artifact reference.
+- Brownfield baseline commands execute in a disposable detached worktree pinned to the recorded base commit; they do not run in the workload checkout.
+- Greenfield bootstrap may create only neutral repository/control metadata; it may not invent product architecture before specification.
+- Repository guidance remains `REPOSITORY_CONTENT`, never factory policy, and detected commands come only from bounded rules or explicit tokenized overrides.
 - Scheduler readiness/capacity/resource conflicts are deterministic and model-free.
 - A worker result is authoritative only when its lease epoch is still current.
 - Workers never receive `/var/run/docker.sock`; only the executor daemon may own Docker lifecycle authority.

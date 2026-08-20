@@ -1,9 +1,19 @@
 """Thin LangGraph node adapters for the parent factory graph."""
 
 from datetime import UTC, datetime
+from typing import Protocol
 
+from infinite_interns.bootstrap.coordinator import BootstrapResult
 from infinite_interns.graph.state import FactoryState
 from infinite_interns.scheduler.service import Scheduler
+
+
+class BootstrapEstablisher(Protocol):
+    async def establish(self, run_id: str) -> BootstrapResult: ...
+
+
+class MissingBaselineError(RuntimeError):
+    """Raised when planning is attempted without a durable repository baseline."""
 
 
 class FactoryGraphServices:
@@ -13,11 +23,34 @@ class FactoryGraphServices:
     model execution, and completion authority remain outside LangGraph nodes.
     """
 
-    def __init__(self, scheduler: Scheduler | None = None) -> None:
+    def __init__(
+        self,
+        scheduler: Scheduler | None = None,
+        bootstrap_establisher: BootstrapEstablisher | None = None,
+    ) -> None:
         self._scheduler = scheduler
+        self._bootstrap = bootstrap_establisher
 
     async def load_run(self, state: FactoryState) -> dict[str, object]:
         return {"run_id": state.run_id}
+
+    async def bootstrap(self, state: FactoryState) -> dict[str, object]:
+        if self._bootstrap is None:
+            if state.baseline_ref is not None:
+                return {"baseline_ref": state.baseline_ref}
+            raise MissingBaselineError("repository bootstrap must complete before specification")
+
+        result = await self._bootstrap.establish(state.run_id)
+        return {
+            "baseline_ref": result.baseline_ref,
+            "current_commit": result.base_commit,
+            "last_green_commit": result.base_commit,
+        }
+
+    async def specification_pending(self, state: FactoryState) -> dict[str, object]:
+        if state.baseline_ref is None:
+            raise MissingBaselineError("specification entry requires a persisted baseline reference")
+        return {"spec_version": state.spec_version}
 
     async def schedule(self, state: FactoryState) -> dict[str, object]:
         if self._scheduler is None:
@@ -39,6 +72,14 @@ def configure_services(services: FactoryGraphServices) -> None:
 
 async def load_run(state: FactoryState) -> dict[str, object]:
     return await _services.load_run(state)
+
+
+async def bootstrap(state: FactoryState) -> dict[str, object]:
+    return await _services.bootstrap(state)
+
+
+async def specification_pending(state: FactoryState) -> dict[str, object]:
+    return await _services.specification_pending(state)
 
 
 async def schedule(state: FactoryState) -> dict[str, object]:

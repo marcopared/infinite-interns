@@ -34,6 +34,10 @@ class FilesystemArtifactStore:
             quote(artifact_id, safe="._-"),
         )
 
+    def ref(self, run_id: str, kind: str, artifact_id: str) -> str:
+        self._path_for(run_id, kind, artifact_id)
+        return self._uri(run_id, kind, artifact_id)
+
     def put(self, run_id: str, kind: str, artifact_id: str, data: bytes) -> str:
         path = self._path_for(run_id, kind, artifact_id)
         uri = self._uri(run_id, kind, artifact_id)

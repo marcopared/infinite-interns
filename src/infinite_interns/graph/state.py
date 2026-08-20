@@ -9,6 +9,7 @@ class FactoryState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
+    baseline_ref: str | None = None
     spec_version: str | None = None
     requirement_ids: list[str] = Field(default_factory=list)
     ready_task_ids: list[str] = Field(default_factory=list)
@@ -16,8 +17,8 @@ class FactoryState(BaseModel):
     passed_task_ids: list[str] = Field(default_factory=list)
     failed_task_ids: list[str] = Field(default_factory=list)
     blocked_task_ids: list[str] = Field(default_factory=list)
-    current_commit: str
-    last_green_commit: str
+    current_commit: str | None = None
+    last_green_commit: str | None = None
     failing_gate_ids: list[str] = Field(default_factory=list)
     convergence_iteration: int = 0
     deployment_ref: str | None = None

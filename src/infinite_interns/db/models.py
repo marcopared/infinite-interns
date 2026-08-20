@@ -27,6 +27,7 @@ class RunRow(Base):
     base_commit: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    baseline_ref: Mapped[str | None] = mapped_column(Text)
 
 
 class SpecVersionRow(Base):
