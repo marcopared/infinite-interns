@@ -5,6 +5,7 @@ import subprocess
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from infinite_interns.artifacts.filesystem import FilesystemArtifactStore
 from infinite_interns.bootstrap.commands import CommandDetector
@@ -57,17 +58,24 @@ class BootstrapService:
         failures: list[BaselineFailure] = []
 
         if snapshot.repo_kind is RepositoryKind.BROWNFIELD:
-            for command in commands:
-                if command.kind not in _BASELINE_EXECUTABLE_KINDS:
-                    continue
-                failure = self._run_command(
-                    snapshot,
-                    run_id,
-                    command,
-                    settings.bootstrap.command_timeout_seconds,
-                )
-                if failure is not None:
-                    failures.append(failure)
+            with TemporaryDirectory(prefix="infinite-interns-baseline-") as temporary_root:
+                baseline_repo = Path(temporary_root) / "repo"
+                self._add_baseline_worktree(snapshot, baseline_repo)
+                try:
+                    for command in commands:
+                        if command.kind not in _BASELINE_EXECUTABLE_KINDS:
+                            continue
+                        failure = self._run_command(
+                            snapshot,
+                            baseline_repo,
+                            run_id,
+                            command,
+                            settings.bootstrap.command_timeout_seconds,
+                        )
+                        if failure is not None:
+                            failures.append(failure)
+                finally:
+                    self._remove_baseline_worktree(snapshot, baseline_repo)
 
         languages, package_managers = self._environment_hints(snapshot)
         return BaselineSummary(
@@ -87,9 +95,45 @@ class BootstrapService:
         payload = summary.model_dump_json(indent=2).encode()
         return self._artifacts.put(run_id, "baseline", artifact_id, payload)
 
+    @staticmethod
+    def _add_baseline_worktree(snapshot: RepositorySnapshot, baseline_repo: Path) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(snapshot.path),
+                "worktree",
+                "add",
+                "--detach",
+                str(baseline_repo),
+                snapshot.base_commit,
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    @staticmethod
+    def _remove_baseline_worktree(snapshot: RepositorySnapshot, baseline_repo: Path) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(snapshot.path),
+                "worktree",
+                "remove",
+                "--force",
+                str(baseline_repo),
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
     def _run_command(
         self,
         snapshot: RepositorySnapshot,
+        baseline_repo: Path,
         run_id: str,
         command: DetectedCommand,
         timeout_seconds: int,
@@ -97,7 +141,7 @@ class BootstrapService:
         try:
             completed = subprocess.run(
                 list(command.argv),
-                cwd=snapshot.path,
+                cwd=baseline_repo,
                 check=False,
                 text=True,
                 capture_output=True,
@@ -111,9 +155,11 @@ class BootstrapService:
             stdout = self._timeout_text(exc.stdout)
             stderr = self._timeout_text(exc.stderr) + "\ncommand timed out"
 
-        normalized_argv = tuple(self._normalize(token, snapshot.path) for token in command.argv)
-        normalized_stdout = self._normalize(stdout, snapshot.path)
-        normalized_stderr = self._normalize(stderr, snapshot.path)
+        normalized_argv = tuple(
+            self._normalize(token, snapshot.path, baseline_repo) for token in command.argv
+        )
+        normalized_stdout = self._normalize(stdout, snapshot.path, baseline_repo)
+        normalized_stderr = self._normalize(stderr, snapshot.path, baseline_repo)
         payload = {
             "argv": normalized_argv,
             "command_kind": command.kind.value,
@@ -160,8 +206,11 @@ class BootstrapService:
         return value.decode(errors="replace") if isinstance(value, bytes) else value
 
     @staticmethod
-    def _normalize(value: str, repo: Path) -> str:
-        return value.replace(str(repo), "<repo>").replace("\r\n", "\n")
+    def _normalize(value: str, *paths: Path) -> str:
+        normalized = value.replace("\r\n", "\n")
+        for path in paths:
+            normalized = normalized.replace(str(path), "<repo>")
+        return normalized
 
     @staticmethod
     def _failure_summary(stdout: str, stderr: str, exit_code: int) -> str:
